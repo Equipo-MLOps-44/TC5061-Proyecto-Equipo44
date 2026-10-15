@@ -57,5 +57,11 @@ Proyecto integrador de la materia de MLOps que toma los datos de mibici para rea
     └── plots.py                <- Code to create visualizations
 ```
 
---------
+## Data ingestion
 
+Place CSV files in `data/external` and run
+`python -m tc5061_proyecto_equipo_44.dataset` from the project directory. The
+ingestion script combines all CSV files into `data/processed/dataset.csv`,
+aligning columns when files have different schemas.
+
+--------
