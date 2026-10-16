@@ -59,9 +59,17 @@ Proyecto integrador de la materia de MLOps que toma los datos de mibici para rea
 
 ## Data ingestion
 
-Place CSV files in `data/external` and run
-`python -m tc5061_proyecto_equipo_44.dataset` from the project directory. The
-ingestion script combines all CSV files into `data/processed/dataset.csv`,
-aligning columns when files have different schemas.
+Run `python -m tc5061_proyecto_equipo_44.dataset` from the project directory.
+The script reads the download links published on
+[MiBici's open-data page](https://mibici.net/es/datos-abiertos/), downloads the
+latest 24 months of trip CSVs and the newest nomenclature CSV into
+`data/external`, and combines the trip data into
+`data/processed/dataset.parquet`. The nomenclature file is kept separately and
+is not mixed into the trip dataset. CSV rows are processed in bounded batches
+to limit memory use. Column names are normalized to lowercase ASCII
+`snake_case`, text is decoded from UTF-8 (or Windows-1252 for legacy files) and
+stored as Unicode, and the `inicio_del_viaje` and `fin_del_viaje` columns are
+written as Parquet timestamps. Other columns remain strings so identifiers
+retain their original formatting.
 
 --------

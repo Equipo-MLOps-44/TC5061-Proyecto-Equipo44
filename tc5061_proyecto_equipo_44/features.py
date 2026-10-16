@@ -12,7 +12,7 @@ app = typer.Typer()
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ----
-    input_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
+    input_path: Path = PROCESSED_DATA_DIR / "dataset.parquet",
     output_path: Path = PROCESSED_DATA_DIR / "features.csv",
     # -----------------------------------------
 ):
