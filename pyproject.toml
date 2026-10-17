@@ -16,7 +16,12 @@ classifiers = [
     "License :: OSI Approved :: MIT License"
 ]
 requires-python = "~=3.10.0"
-dependencies = ["pyarrow"]
+dependencies = [
+    "matplotlib>=3.10.9",
+    "pandas>=2.3.3",
+    "pyarrow",
+    "seaborn>=0.13.2",
+]
 
 [tool.black]
 line-length = 99
