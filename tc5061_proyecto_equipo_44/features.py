@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import pandas as pd
@@ -259,6 +258,73 @@ def create_flow_features(df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def estimate_station_inventory(
+    df: pd.DataFrame,
+    initial_occupancy: float = 0.75,
+    risk_threshold: float = 0.20,
+) -> pd.DataFrame:
+    """Estimate hourly bike inventory and derive station-risk labels.
+
+    The first observed hour for each station starts at 75% of capacity.
+    Inventory is updated as previous inventory - departures + arrivals,
+    and constrained to [0, capacity]. Risk labels are proxy estimates, not
+    observed availability, because actual station inventory is unavailable.
+    """
+    if not 0 <= initial_occupancy <= 1:
+        raise ValueError("initial_occupancy must be between 0 and 1")
+    if not 0 <= risk_threshold <= 1:
+        raise ValueError("risk_threshold must be between 0 and 1")
+
+    result = df.sort_values(["Origen_Id", "hour"]).copy()
+    result["dpcapacity"] = pd.to_numeric(
+        result["dpcapacity"], errors="coerce"
+    )
+    result["departures"] = pd.to_numeric(
+        result["departures"], errors="coerce"
+    ).fillna(0)
+    result["arrivals"] = pd.to_numeric(
+        result["arrivals"], errors="coerce"
+    ).fillna(0)
+
+    result["estimated_bikes_available"] = float("nan")
+
+    for _, indices in result.groupby("Origen_Id", sort=False).groups.items():
+        station = result.loc[indices].sort_values("hour")
+        capacities = station["dpcapacity"].dropna()
+        if capacities.empty or capacities.iloc[0] <= 0:
+            continue
+
+        capacity = float(capacities.iloc[0])
+        bikes = round(capacity * initial_occupancy)
+        estimates = []
+
+        for row in station.itertuples():
+            # Update from the observed flows for this hour.
+            bikes = bikes - float(row.departures) + float(row.arrivals)
+            bikes = min(max(bikes, 0.0), capacity)
+            estimates.append(bikes)
+
+        result.loc[station.index, "estimated_bikes_available"] = estimates
+
+    result["estimated_free_docks"] = (
+        result["dpcapacity"] - result["estimated_bikes_available"]
+    )
+    result["risk_no_bikes"] = (
+        result["estimated_bikes_available"]
+        <= result["dpcapacity"] * risk_threshold
+    ).astype("Int64")
+    result["risk_no_docks"] = (
+        result["estimated_free_docks"]
+        <= result["dpcapacity"] * risk_threshold
+    ).astype("Int64")
+
+    # Keep risk labels missing when station capacity/inventory is unknown.
+    invalid = result["dpcapacity"].isna() | (result["dpcapacity"] <= 0)
+    result.loc[invalid, ["risk_no_bikes", "risk_no_docks"]] = pd.NA
+
+    return result
+
+
 def create_station_profiles(df: pd.DataFrame) -> pd.DataFrame:
     """
     Create station usage profiles for clustering (P3).
@@ -368,6 +434,11 @@ def build_feature_datasets_from_flow(
 
     # Station information
     hourly = add_station_features(hourly, stations)
+
+    # P2: estimate bicycle inventory and derive both risk indicators.
+    hourly = estimate_station_inventory(
+        hourly, initial_occupancy=0.75, risk_threshold=0.20
+    )
 
     # Historical station profiles for P3
     profiles = create_station_profiles(hourly)
