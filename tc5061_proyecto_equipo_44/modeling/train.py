@@ -1,9 +1,11 @@
-"""Train baseline models for P1, P2 and P3."""
+"""Train baseline models for P1, P2 and P3 and track them in MLflow."""
 
 import json
-import warnings
+import subprocess
+from pathlib import Path
 
 import joblib
+import mlflow
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -28,42 +30,156 @@ from tc5061_proyecto_equipo_44.config import (
     REPORTS_DIR,
 )
 
+MLFLOW_EXPERIMENT_NAME = "mibici-equipo44"
+MLFLOW_TRACKING_URI = "sqlite:///mlflow.db"
+
 RANDOM_STATE = 0
 TEST_SIZE = 0.30
 N_CLUSTERS = 3
+TEAM_TAG = "equipo44"
 
 HOURLY_PATH = PROCESSED_DATA_DIR / "hourly_features.parquet"
 PROFILES_PATH = PROCESSED_DATA_DIR / "station_profiles.parquet"
 
-# P2 target columns are created by feature engineering.
+
+def configure_mlflow() -> None:
+    """Configure local MLflow tracking."""
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+    logger.info("MLflow URI: {}", mlflow.get_tracking_uri())
+    logger.info("MLflow experiment: {}", MLFLOW_EXPERIMENT_NAME)
 
 
-def save_metrics(metrics: dict, filename: str) -> None:
-    """Save experiment metrics as JSON."""
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+def get_git_commit() -> str:
+    """Return the current Git commit, or 'unknown' outside a Git repository."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
-    path = REPORTS_DIR / filename
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(metrics, file, indent=4, ensure_ascii=False, default=float)
 
-    logger.info("Metrics saved to {}", path)
+def dataset_metadata(path: Path) -> dict:
+    """Collect basic metadata about the input dataset."""
+    stat = path.stat()
+
+    return {
+        "dataset_file": path.name,
+        "dataset_size_bytes": stat.st_size,
+        "dataset_modified_time": pd.Timestamp(
+            stat.st_mtime, unit="s"
+        ).isoformat(),
+    }
 
 
-def save_metrics(metrics: dict, filename: str) -> None:
-    """Save experiment metrics as JSON."""
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+def log_mlflow_run(
+    run_name: str,
+    params: dict,
+    metrics: dict,
+    tags: dict,
+    artifact_paths: list | None = None,
+) -> None:
+    """Log parameters, metrics, tags and existing artifacts to MLflow."""
+    commit = get_git_commit()
 
-    path = REPORTS_DIR / filename
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(metrics, file, indent=4, ensure_ascii=False, default=float)
+    with mlflow.start_run(run_name=run_name):
+        # MLflow parameters must be scalar-compatible values.
+        safe_params = {**params, "git_commit": commit}
 
-    logger.info("Metrics saved to {}", path)
+        for key, value in safe_params.items():
+            if isinstance(value, (list, tuple, dict)):
+                value = json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    default=str,
+                )
+
+            mlflow.log_param(key, value)
+
+        safe_tags = {
+            **tags,
+            "team": TEAM_TAG,
+            "project": "MiBici",
+            "git_commit": commit,
+        }
+        mlflow.set_tags(
+            {key: str(value) for key, value in safe_tags.items()}
+        )
+
+        # P1/P2 metrics are test metrics. P3 uses data_ metrics.
+        numeric_metrics = {}
+
+        for key, value in metrics.items():
+            if (
+                isinstance(value, (int, float, np.integer, np.floating))
+                and not isinstance(value, (bool, np.bool_))
+                and np.isfinite(value)
+            ):
+                metric_name = (
+                    key
+                    if key.startswith(("test_", "data_"))
+                    else f"test_{key}"
+                )
+                numeric_metrics[metric_name] = float(value)
+
+        if numeric_metrics:
+            mlflow.log_metrics(numeric_metrics)
+
+        # Log only files that exist.
+        for artifact in artifact_paths or []:
+            artifact_path = Path(artifact)
+
+            if artifact_path.is_file():
+                mlflow.log_artifact(str(artifact_path))
+            else:
+                logger.warning(
+                    "Artifact not found; not logged: {}",
+                    artifact_path,
+                )
+
+        logger.info("MLflow run logged: {}", run_name)
+
+
+def chronological_split(
+    df: pd.DataFrame,
+    timestamp_column: str = "hour",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp]:
+    """Split records chronologically, keeping timestamps in one partition."""
+    unique_times = np.sort(df[timestamp_column].dropna().unique())
+
+    if len(unique_times) < 2:
+        raise ValueError(
+            "At least two distinct timestamps are required."
+        )
+
+    split_index = int(len(unique_times) * (1 - TEST_SIZE))
+    split_index = min(max(split_index, 1), len(unique_times) - 1)
+    split_time = pd.Timestamp(unique_times[split_index])
+
+    train = df[df[timestamp_column] < split_time].copy()
+    test = df[df[timestamp_column] >= split_time].copy()
+
+    if train.empty or test.empty:
+        raise ValueError(
+            "Chronological split produced an empty partition."
+        )
+
+    return train, test, split_time
 
 
 def train_p1() -> dict:
-    """Prepare P1 feature matrices and evaluate baseline references."""
-    P1_FEATURES = [
-        "Origen_Id",  # Identificador categórico de la estación
+    """
+    P1: estimate hourly station departures using a mean baseline.
+
+    The planned feature matrices are prepared for the future predictive
+    model, but the DummyRegressor baseline does not use those features.
+    """
+    p1_features = [
+        "Origen_Id",
         "departures_lag_1h",
         "departures_lag_24h",
         "departures_lag_168h",
@@ -76,123 +192,154 @@ def train_p1() -> dict:
 
     df = pd.read_parquet(HOURLY_PATH)
 
-    required = {"Origen_Id", "hour", "departures"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"P1 is missing columns: {sorted(missing)}")
+    required_columns = {"Origen_Id", "hour", "departures"}
+    missing_columns = required_columns - set(df.columns)
 
-    # Validate that all planned features exist before preparing X_train/X_test.
-    available_p1_features = [col for col in P1_FEATURES if col in df.columns]
-    missing_p1_features = [col for col in P1_FEATURES if col not in df.columns]
-    if missing_p1_features:
-        raise ValueError(f"P1 is missing features: {missing_p1_features}")
-    logger.info("P1 features available: {}", available_p1_features)
+    if missing_columns:
+        raise ValueError(
+            f"P1 is missing required columns: {sorted(missing_columns)}"
+        )
+
+    missing_features = [
+        column for column in p1_features if column not in df.columns
+    ]
+
+    if missing_features:
+        raise ValueError(
+            f"P1 is missing planned features: {missing_features}"
+        )
 
     df["hour"] = pd.to_datetime(df["hour"], errors="coerce")
     df["departures"] = pd.to_numeric(
         df["departures"], errors="coerce"
     )
-    df = df.dropna(subset=["Origen_Id", "hour", "departures"])
-    df = df.sort_values(["hour", "Origen_Id"]).reset_index(drop=True)
+    df = df.dropna(
+        subset=["Origen_Id", "hour", "departures"]
+    )
+    df = df.sort_values(
+        ["hour", "Origen_Id"]
+    ).reset_index(drop=True)
 
-    # Split chronologically: never train on observations after the test period.
-    unique_hours = np.sort(df["hour"].unique())
-    if len(unique_hours) < 2:
-        raise ValueError("P1 requires at least two distinct timestamps.")
+    train, test, split_time = chronological_split(df)
 
-    split_index = int(len(unique_hours) * (1 - TEST_SIZE))
-    split_index = min(max(split_index, 1), len(unique_hours) - 1)
-    split_time = unique_hours[split_index]
-
-    train = df[df["hour"] < split_time].copy()
-    test = df[df["hour"] >= split_time].copy()
-
-    if train.empty or test.empty:
-        raise ValueError("P1 chronological split produced an empty partition.")
-    
     y_train = train["departures"].to_numpy()
     y_test = test["departures"].to_numpy()
 
-    # Prepare the planned P1 feature matrices using the same chronological split.
-    # These matrices are ready for a future predictive estimator; the baselines
-    # below intentionally do not consume them.
-    X_train = train[P1_FEATURES].copy()
-    X_test = test[P1_FEATURES].copy()
+    # Prepare feature matrices for the future predictive model.
+    X_train = train[p1_features].copy()
+    X_test = test[p1_features].copy()
 
-    # Station ID is categorical, not a continuous numeric measurement.
+    # Station ID is categorical.
     X_train["Origen_Id"] = X_train["Origen_Id"].astype("string")
     X_test["Origen_Id"] = X_test["Origen_Id"].astype("string")
 
-    numeric_features = [col for col in P1_FEATURES if col != "Origen_Id"]
-    for col in numeric_features:
-        X_train[col] = pd.to_numeric(X_train[col], errors="coerce")
-        X_test[col] = pd.to_numeric(X_test[col], errors="coerce")
+    numeric_features = [
+        feature for feature in p1_features
+        if feature != "Origen_Id"
+    ]
+
+    for feature in numeric_features:
+        X_train[feature] = pd.to_numeric(
+            X_train[feature], errors="coerce"
+        )
+        X_test[feature] = pd.to_numeric(
+            X_test[feature], errors="coerce"
+        )
 
     logger.info(
-        "P1 feature matrices prepared: X_train={}, X_test={}, features={}",
+        "P1 feature matrices: X_train={}, X_test={}",
         X_train.shape,
         X_test.shape,
-        P1_FEATURES,
     )
 
-    # Baseline 1: predict the training-set mean for every observation.
-    # The DummyRegressor receives a constant placeholder, not P1_FEATURES,
-    # because it is a reference baseline rather than the future feature model.
+    # The baseline predicts the training-set mean for every test row.
+    # Placeholder input is intentional: this is a reference baseline,
+    # not the future feature-based model.
     mean_model = DummyRegressor(strategy="mean")
-    mean_model.fit(np.zeros((len(train), 1)), y_train)
-    mean_predictions = mean_model.predict(np.zeros((len(test), 1)))
+    mean_model.fit(np.zeros((len(y_train), 1)), y_train)
 
-    metrics = {
+    predictions = mean_model.predict(
+        np.zeros((len(y_test), 1))
+    )
+
+    mae = mean_absolute_error(y_test, predictions)
+    rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = MODELS_DIR / "p1_mean_baseline.joblib"
+    joblib.dump(mean_model, model_path)
+
+    results = {
         "task": "P1_regression",
         "target": "departures",
+        "baseline": "DummyRegressor(strategy=mean)",
         "split": "chronological",
+        "split_time": str(split_time),
         "test_size": TEST_SIZE,
-        "split_time": str(pd.Timestamp(split_time)),
         "train_rows": len(train),
         "test_rows": len(test),
-        "model_training_status": "not_trained_yet_baselines_only",
-        "planned_model_features": P1_FEATURES,
-        "available_planned_model_features": available_p1_features,
-        "missing_planned_model_features": missing_p1_features,
+        "planned_model_features": p1_features,
         "feature_matrices_prepared": True,
         "X_train_shape": list(X_train.shape),
         "X_test_shape": list(X_test.shape),
-        "station_id_treated_as": "categorical",
-        "mean_baseline": {
-            "mae": mean_absolute_error(y_test, mean_predictions),
-            "rmse": np.sqrt(
-                mean_squared_error(y_test, mean_predictions)
-            ),
-        },
+        "mae": mae,
+        "rmse": rmse,
     }
 
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(mean_model, MODELS_DIR / "p1_mean_baseline.joblib")
+    log_mlflow_run(
+        run_name="P1_mean_baseline",
+        params={
+            "task": "P1_regression",
+            "target": "departures",
+            "baseline": "DummyRegressor",
+            "strategy": "mean",
+            "test_size": TEST_SIZE,
+            "split": "chronological",
+            "split_time": str(split_time),
+            "train_rows": len(train),
+            "test_rows": len(test),
+            "planned_features": p1_features,
+            "feature_matrices_prepared": True,
+            "station_id_treated_as": "categorical",
+            "data_start_time": str(df["hour"].min()),
+            "data_end_time": str(df["hour"].max()),
+            **dataset_metadata(HOURLY_PATH),
+        },
+        metrics={
+            "mae": mae,
+            "rmse": rmse,
+        },
+        tags={
+            "problem": "P1",
+            "question": "demand_prediction",
+            "model_type": "mean_baseline",
+        },
+        artifact_paths=[model_path],
+    )
 
-    save_metrics(metrics, "p1_baseline_metrics.json")
-    logger.success("P1 baseline trained.")
-
-    return metrics
+    logger.success("P1 mean baseline completed.")
+    return results
 
 
 def train_p2() -> dict | None:
     """
-    Train majority-class baselines for both station risk indicators.
+    P2: majority-class baselines for station risk indicators.
 
-    The target labels are derived from the estimated inventory created in
-    features.py. Predictors use temporal and lagged information only; the
-    contemporaneous inventory and risk labels are deliberately excluded.
+    Risk labels are derived from estimated inventory in feature engineering.
+    They are proxies, not measurements of actual station inventory.
     """
     df = pd.read_parquet(HOURLY_PATH)
 
     risk_targets = ["risk_no_bikes", "risk_no_docks"]
-    available_targets = [col for col in risk_targets if col in df.columns]
+    available_targets = [
+        target for target in risk_targets
+        if target in df.columns
+    ]
 
     if not available_targets:
         logger.warning(
-            "P2 skipped: neither risk_no_bikes nor risk_no_docks exists in {}. "
-            "Run feature engineering first to create the estimated inventory "
-            "and risk labels.",
+            "P2 skipped: risk targets are not present in {}. "
+            "Run feature engineering first.",
             HOURLY_PATH,
         )
         return None
@@ -210,52 +357,56 @@ def train_p2() -> dict | None:
         "net_flow_lag_1h",
         "dpcapacity",
     ]
-    feature_columns = [col for col in candidate_features if col in df.columns]
+
+    feature_columns = [
+        column for column in candidate_features
+        if column in df.columns
+    ]
 
     if not feature_columns:
         raise ValueError("P2 has no eligible predictor columns.")
 
-    df = df.sort_values(["hour", "Origen_Id"]).reset_index(drop=True)
     df["hour"] = pd.to_datetime(df["hour"], errors="coerce")
-    df = df.dropna(subset=["hour"]).copy()
+    df = df.dropna(subset=["hour"])
+    df = df.sort_values(
+        ["hour", "Origen_Id"]
+    ).reset_index(drop=True)
 
-    # Split by timestamp so records from the same hour cannot appear in both
-    # train and test partitions.
-    unique_hours = np.sort(df["hour"].unique())
-    if len(unique_hours) < 2:
-        raise ValueError("P2 requires at least two distinct timestamps.")
+    train_all, test_all, split_time = chronological_split(df)
 
-    split_index = int(len(unique_hours) * (1 - TEST_SIZE))
-    split_index = min(max(split_index, 1), len(unique_hours) - 1)
-    split_time = unique_hours[split_index]
-
-    train_all = df[df["hour"] < split_time].copy()
-    test_all = df[df["hour"] >= split_time].copy()
-
-    results = {}
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    results = {}
 
-    for target_column in available_targets:
-        train = train_all.dropna(subset=[target_column]).copy()
-        test = test_all.dropna(subset=[target_column]).copy()
+    for target in available_targets:
+        train = train_all.dropna(subset=[target]).copy()
+        test = test_all.dropna(subset=[target]).copy()
 
         if train.empty or test.empty:
-            logger.warning("P2 target '{}' skipped: empty train/test split.", target_column)
-            continue
-
-        if train[target_column].nunique() < 2:
             logger.warning(
-                "P2 target '{}' skipped: training data contains fewer than two classes.",
-                target_column,
+                "P2 target '{}' skipped because a split is empty.",
+                target,
             )
             continue
 
-        X_train = train[feature_columns].apply(pd.to_numeric, errors="coerce")
-        X_test = test[feature_columns].apply(pd.to_numeric, errors="coerce")
-        y_train = train[target_column].astype(int)
-        y_test = test[target_column].astype(int)
+        if train[target].nunique() < 2:
+            logger.warning(
+                "P2 target '{}' skipped: training data contains "
+                "fewer than two classes.",
+                target,
+            )
+            continue
 
-        # Fit imputations on training data only.
+        X_train = train[feature_columns].apply(
+            pd.to_numeric, errors="coerce"
+        )
+        X_test = test[feature_columns].apply(
+            pd.to_numeric, errors="coerce"
+        )
+
+        y_train = train[target].astype(int)
+        y_test = test[target].astype(int)
+
+        # Learn imputation values from training data only.
         medians = X_train.median().fillna(0)
         X_train = X_train.fillna(medians)
         X_test = X_test.fillna(medians)
@@ -267,79 +418,135 @@ def train_p2() -> dict | None:
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
 
-        labels = sorted(pd.concat([y_train, y_test]).unique().tolist())
+        labels = sorted(
+            set(y_train.unique()).union(set(y_test.unique()))
+        )
+
+        accuracy = accuracy_score(y_test, predictions)
+        macro_f1 = f1_score(
+            y_test,
+            predictions,
+            average="macro",
+            zero_division=0,
+        )
+        macro_recall = recall_score(
+            y_test,
+            predictions,
+            average="macro",
+            zero_division=0,
+        )
+
         metrics = {
             "task": "P2_classification",
-            "target": target_column,
+            "target": target,
             "model_type": "majority_class_baseline",
             "features": feature_columns,
             "split": "chronological_by_timestamp",
-            "split_time": str(pd.Timestamp(split_time)),
+            "split_time": str(split_time),
             "test_size": TEST_SIZE,
             "train_rows": len(train),
             "test_rows": len(test),
-            "accuracy": accuracy_score(y_test, predictions),
-            "macro_f1": f1_score(
-                y_test, predictions, average="macro", zero_division=0
-            ),
-            "macro_recall": recall_score(
-                y_test, predictions, average="macro", zero_division=0
-            ),
+            "accuracy": accuracy,
+            "macro_f1": macro_f1,
+            "macro_recall": macro_recall,
             "labels": [int(label) for label in labels],
             "confusion_matrix": confusion_matrix(
                 y_test, predictions, labels=labels
             ).tolist(),
             "classification_report": classification_report(
-                y_test, predictions, output_dict=True, zero_division=0
+                y_test,
+                predictions,
+                labels=labels,
+                output_dict=True,
+                zero_division=0,
             ),
         }
 
-        model_filename = (
-            "p2_no_bikes_dummy_baseline.joblib"
-            if target_column == "risk_no_bikes"
-            else "p2_no_docks_dummy_baseline.joblib"
-        )
-        metrics_filename = (
-            "p2_no_bikes_baseline_metrics.json"
-            if target_column == "risk_no_bikes"
-            else "p2_no_docks_baseline_metrics.json"
-        )
+        if target == "risk_no_bikes":
+            model_filename = "p2_no_bikes_dummy_baseline.joblib"
+        else:
+            model_filename = "p2_no_docks_dummy_baseline.joblib"
+
+        model_path = MODELS_DIR / model_filename
 
         joblib.dump(
-            {"model": model, "features": feature_columns, "medians": medians},
-            MODELS_DIR / model_filename,
+            {
+                "model": model,
+                "features": feature_columns,
+                "medians": medians,
+            },
+            model_path,
         )
-        save_metrics(metrics, metrics_filename)
-        results[target_column] = metrics
-        logger.success("P2 baseline trained for '{}'.", target_column)
+
+        log_mlflow_run(
+            run_name=f"P2_{target}_majority_baseline",
+            params={
+                "task": "P2_classification",
+                "target": target,
+                "strategy": "most_frequent",
+                "random_state": RANDOM_STATE,
+                "test_size": TEST_SIZE,
+                "split": "chronological_by_timestamp",
+                "split_time": str(split_time),
+                "train_rows": len(train),
+                "test_rows": len(test),
+                "features": feature_columns,
+                "data_start_time": str(df["hour"].min()),
+                "data_end_time": str(df["hour"].max()),
+                **dataset_metadata(HOURLY_PATH),
+            },
+            metrics={
+                "accuracy": accuracy,
+                "macro_f1": macro_f1,
+                "macro_recall": macro_recall,
+            },
+            tags={
+                "problem": "P2",
+                "question": target,
+                "model_type": "majority_class_baseline",
+            },
+            artifact_paths=[model_path],
+        )
+
+        results[target] = metrics
+        logger.success(
+            "P2 majority baseline completed for '{}'.",
+            target,
+        )
 
     return results or None
 
 
 def train_p3() -> dict:
-    """Cluster station profiles using scaled numeric usage features."""
+    """P3: cluster station profiles using KMeans with three clusters."""
     df = pd.read_parquet(PROFILES_PATH)
 
-    excluded = {"Origen_Id", "id"}
+    excluded_columns = {"Origen_Id", "id"}
     feature_columns = [
-        col
-        for col in df.select_dtypes(include="number").columns
-        if col not in excluded
+        column
+        for column in df.select_dtypes(include="number").columns
+        if column not in excluded_columns
     ]
 
     if not feature_columns:
-        raise ValueError("P3 has no numeric station-profile features.")
+        raise ValueError(
+            "P3 has no numeric station-profile features."
+        )
 
-    X = df[feature_columns].replace([np.inf, -np.inf], np.nan)
+    X = df[feature_columns].replace(
+        [np.inf, -np.inf], np.nan
+    )
     X = X.fillna(X.median()).fillna(0)
 
-    # KMeans requires enough distinct stations and feature profiles.
     if len(X) <= N_CLUSTERS:
         raise ValueError(
             f"P3 needs more than {N_CLUSTERS} station records."
         )
+
     if len(X.drop_duplicates()) < N_CLUSTERS:
-        raise ValueError("P3 has fewer distinct profiles than clusters.")
+        raise ValueError(
+            "P3 has fewer distinct profiles than clusters."
+        )
 
     model = make_pipeline(
         StandardScaler(),
@@ -349,45 +556,81 @@ def train_p3() -> dict:
             n_init=10,
         ),
     )
-    labels = model.fit_predict(X)
 
-    metrics = {
+    labels = model.fit_predict(X)
+    scaled_X = model.named_steps["standardscaler"].transform(X)
+
+    silhouette = silhouette_score(scaled_X, labels)
+
+    cluster_sizes = {
+        str(int(cluster)): int(count)
+        for cluster, count in (
+            pd.Series(labels).value_counts().sort_index().items()
+        )
+    }
+
+    results = {
         "task": "P3_clustering",
         "features": feature_columns,
         "n_clusters": N_CLUSTERS,
         "stations": len(X),
-        "silhouette_score": silhouette_score(
-            model.named_steps["standardscaler"].transform(X),
-            labels,
-        ),
-        "cluster_sizes": {
-            str(int(cluster)): int(count)
-            for cluster, count in
-            pd.Series(labels).value_counts().sort_index().items()
-        },
+        "silhouette_score": silhouette,
+        "cluster_sizes": cluster_sizes,
     }
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    model_path = MODELS_DIR / "p3_kmeans_baseline.joblib"
+    clusters_path = REPORTS_DIR / "p3_station_clusters.csv"
+
     joblib.dump(
-        {"model": model, "features": feature_columns},
-        MODELS_DIR / "p3_kmeans_baseline.joblib",
+        {
+            "model": model,
+            "features": feature_columns,
+        },
+        model_path,
     )
 
     output = df.copy()
     output["cluster"] = labels
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    output.to_csv(
-        REPORTS_DIR / "p3_station_clusters.csv", index=False
+    output.to_csv(clusters_path, index=False)
+
+    log_mlflow_run(
+        run_name="P3_kmeans_3_clusters",
+        params={
+            "task": "P3_clustering",
+            "algorithm": "KMeans",
+            "n_clusters": N_CLUSTERS,
+            "random_state": RANDOM_STATE,
+            "n_init": 10,
+            "features": feature_columns,
+            "stations": len(X),
+            **dataset_metadata(PROFILES_PATH),
+        },
+        metrics={
+            "data_silhouette_score": silhouette,
+            "data_stations": len(X),
+        },
+        tags={
+            "problem": "P3",
+            "question": "station_clustering",
+            "model_type": "kmeans_baseline",
+        },
+        artifact_paths=[
+            model_path,
+            clusters_path,
+        ],
     )
 
-    save_metrics(metrics, "p3_baseline_metrics.json")
-    logger.success("P3 baseline trained.")
-
-    return metrics
+    logger.success("P3 KMeans baseline completed.")
+    return results
 
 
 def main() -> None:
-    """Train all baselines that have the required data."""
+    """Run all baselines and track results in MLflow."""
+    configure_mlflow()
+
     for path in [HOURLY_PATH, PROFILES_PATH]:
         if not path.exists():
             raise FileNotFoundError(
@@ -401,13 +644,14 @@ def main() -> None:
     }
 
     logger.info("Baseline training summary:")
-    for task, metrics in results.items():
-        logger.info(
-            "{}: {}",
-            task,
-            "skipped (target unavailable)" if metrics is None
-            else "completed",
+
+    for task, result in results.items():
+        status = (
+            "skipped (targets unavailable)"
+            if result is None
+            else "completed"
         )
+        logger.info("{}: {}", task, status)
 
 
 if __name__ == "__main__":
