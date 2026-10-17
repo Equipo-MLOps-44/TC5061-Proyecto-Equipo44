@@ -376,3 +376,209 @@ def test_aggregate_flow_chunks():
 
     assert station_3["arrivals"] == 2
     assert station_3["net_flow"] == 2
+
+from tc5061_proyecto_equipo_44.features import find_nomenclature_file
+
+
+def test_find_nomenclature_file(tmp_path):
+
+    # Create example nomenclature files
+    (tmp_path / "nomenclatura_2025_01.csv").touch()
+    (tmp_path / "nomenclatura_2026_09.csv").touch()
+
+    # Find the most recent file
+    result = find_nomenclature_file(tmp_path)
+
+    assert result.name == "nomenclatura_2026_09.csv"
+
+
+from tc5061_proyecto_equipo_44.features import read_trip_batches
+
+
+def test_read_trip_batches(tmp_path):
+
+    trips = pd.DataFrame({
+        "origen_id": ["2", "2", "3"],
+        "destino_id": ["3", "3", "2"],
+        "inicio_del_viaje": pd.to_datetime([
+            "2025-01-01 08:10:00",
+            "2025-01-01 08:20:00",
+            "2025-01-01 09:10:00"
+        ]),
+        "fin_del_viaje": pd.to_datetime([
+            "2025-01-01 08:25:00",
+            "2025-01-01 08:35:00",
+            "2025-01-01 09:25:00"
+        ])
+    })
+
+    path = tmp_path / "dataset.parquet"
+    trips.to_parquet(path, index=False)
+
+    batches = list(read_trip_batches(path, batch_size=2))
+
+    # Three records should produce two batches
+    assert len(batches) == 2
+    assert len(batches[0]) == 2
+    assert len(batches[1]) == 1
+
+    # Verify normalized column names
+    assert "Origen_Id" in batches[0].columns
+    assert "Inicio_del_viaje" in batches[0].columns
+
+def test_parquet_batch_aggregation(tmp_path):
+    """Verify hourly aggregation across Parquet batches."""
+
+    trips = pd.DataFrame({
+        "origen_id": ["2", "2", "3", "2"],
+        "destino_id": ["3", "3", "2", "3"],
+        "inicio_del_viaje": pd.to_datetime([
+            "2025-01-01 08:10:00",
+            "2025-01-01 08:20:00",
+            "2025-01-01 09:10:00",
+            "2025-01-01 08:40:00"
+        ]),
+        "fin_del_viaje": pd.to_datetime([
+            "2025-01-01 08:25:00",
+            "2025-01-01 08:35:00",
+            "2025-01-01 09:25:00",
+            "2025-01-01 08:55:00"
+        ])
+    })
+
+    # Save sample data as Parquet
+    path = tmp_path / "dataset.parquet"
+    trips.to_parquet(path, index=False)
+
+    # Read in batches of 2 records
+    batches = read_trip_batches(path, batch_size=2)
+
+    # Aggregate all batches
+    result = aggregate_flow_chunks(batches)
+
+    station_2 = result[
+        (result["Origen_Id"] == 2) &
+        (result["hour"] == pd.Timestamp("2025-01-01 08:00"))
+    ].iloc[0]
+
+    station_3 = result[
+        (result["Origen_Id"] == 3) &
+        (result["hour"] == pd.Timestamp("2025-01-01 08:00"))
+    ].iloc[0]
+
+    assert station_2["departures"] == 3
+    assert station_2["arrivals"] == 0
+    assert station_2["net_flow"] == -3
+
+    assert station_3["arrivals"] == 3
+    assert station_3["net_flow"] == 3
+
+from tc5061_proyecto_equipo_44.features import (
+    build_feature_datasets_from_flow,
+)
+
+
+def test_features_from_aggregated_flow():
+
+    trips = pd.DataFrame({
+        "Origen_Id": [2, 2],
+        "Destino_Id": [3, 3],
+        "Inicio_del_viaje": [
+            "2025-01-01 08:10:00",
+            "2025-01-01 09:10:00"
+        ],
+        "Fin_del_viaje": [
+            "2025-01-01 08:20:00",
+            "2025-01-01 09:20:00"
+        ]
+    })
+
+    stations = pd.DataFrame({
+        "id": [2, 3],
+        "dpcapacity": [15, 19],
+        "latitude": [20.66, 20.67],
+        "longitude": [-103.34, -103.36]
+    })
+
+    # Original method
+    expected_hourly, expected_profiles = (
+        build_feature_datasets(trips, stations)
+    )
+
+    # New method using aggregated flows
+    flow = create_flow_features(trips)
+
+    actual_hourly, actual_profiles = (
+        build_feature_datasets_from_flow(flow, stations)
+    )
+
+    # Both methods must produce identical results
+    pd.testing.assert_frame_equal(
+        expected_hourly, actual_hourly
+    )
+
+    pd.testing.assert_frame_equal(
+        expected_profiles, actual_profiles
+    )
+
+from tc5061_proyecto_equipo_44.features import main
+
+
+def test_main_end_to_end_parquet(tmp_path):
+    """Test the complete feature engineering pipeline."""
+
+    # Simulate the ingestion output
+    trips = pd.DataFrame({
+        "origen_id": [2, 2, 3],
+        "destino_id": [3, 3, 2],
+        "inicio_del_viaje": pd.to_datetime([
+            "2025-01-01 08:10:00",
+            "2025-01-01 08:20:00",
+            "2025-01-01 09:10:00"
+        ]),
+        "fin_del_viaje": pd.to_datetime([
+            "2025-01-01 08:25:00",
+            "2025-01-01 08:35:00",
+            "2025-01-01 09:25:00"
+        ])
+    })
+
+    trips_path = tmp_path / "dataset.parquet"
+    trips.to_parquet(trips_path, index=False)
+
+    # Simulate station nomenclature
+    stations = pd.DataFrame({
+        "id": [2, 3],
+        "dpcapacity": [15, 19],
+        "latitude": [20.66, 20.67],
+        "longitude": [-103.34, -103.36]
+    })
+
+    stations_path = tmp_path / "nomenclatura_2025_01.csv"
+    stations.to_csv(stations_path, index=False)
+
+    hourly_path = tmp_path / "hourly_features.parquet"
+    profiles_path = tmp_path / "station_profiles.parquet"
+
+    # Execute complete pipeline
+    main(
+        trips_path=trips_path,
+        stations_path=stations_path,
+        hourly_output=hourly_path,
+        profiles_output=profiles_path
+    )
+
+    # Verify output files
+    assert hourly_path.exists()
+    assert profiles_path.exists()
+
+    hourly = pd.read_parquet(hourly_path)
+    profiles = pd.read_parquet(profiles_path)
+
+    # Verify that trips were counted correctly
+    assert hourly["departures"].sum() == 3
+    assert hourly["arrivals"].sum() == 3
+
+    # Verify that features were generated
+    assert "net_flow" in hourly.columns
+    assert len(profiles) > 0

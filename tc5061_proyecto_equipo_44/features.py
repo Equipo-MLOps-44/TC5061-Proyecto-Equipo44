@@ -6,7 +6,7 @@ import typer
 from loguru import logger
 
 from tc5061_proyecto_equipo_44.config import EXTERNAL_DATA_DIR, PROCESSED_DATA_DIR
-
+import pyarrow.parquet as pq
 app = typer.Typer()
 
 
@@ -318,29 +318,28 @@ def create_station_profiles(df: pd.DataFrame) -> pd.DataFrame:
     return station_profiles
 
 
-def build_feature_datasets(
-    trips: pd.DataFrame,
+
+def build_feature_datasets_from_flow(
+    flow: pd.DataFrame,
     stations: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Build reusable features for MiBici ML tasks P1, P2 and P3.
+    Build P1, P2 and P3 features from hourly aggregated flows.
 
-    Returns hourly features and station usage profiles.
+    Avoids processing individual trips again.
     """
 
-    # Calculate departures, arrivals and net flow
-    flow = create_flow_features(trips)
-
-    # Complete missing hours for each station
+    # Complete hours without recorded departures
     hourly = complete_hourly_series(
         flow[["Origen_Id", "hour", "departures"]]
     )
 
-    # Add arrivals
+    # Add arrivals for each station and hour
     hourly = hourly.merge(
         flow[["Origen_Id", "hour", "arrivals"]],
         on=["Origen_Id", "hour"],
-        how="left"
+        how="left",
+        validate="one_to_one"
     )
 
     hourly["arrivals"] = (
@@ -351,7 +350,7 @@ def build_feature_datasets(
         hourly["arrivals"] - hourly["departures"]
     )
 
-    # Generate temporal and historical features
+    # Temporal and historical features
     hourly = create_time_features(hourly)
     hourly = create_lag_features(hourly)
     hourly = create_rolling_features(hourly)
@@ -367,14 +366,28 @@ def build_feature_datasets(
         grouped["net_flow"].shift(1)
     )
 
-    # Add station nomenclature information
+    # Station information
     hourly = add_station_features(hourly, stations)
 
-    # Create profiles for P3
+    # Historical station profiles for P3
     profiles = create_station_profiles(hourly)
     profiles = add_station_features(profiles, stations)
 
     return hourly, profiles
+
+
+def build_feature_datasets(
+    trips: pd.DataFrame,
+    stations: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build features directly from individual trips."""
+
+    flow = create_flow_features(trips)
+
+    return build_feature_datasets_from_flow(
+        flow, stations
+    )
+
 
 
 from collections import defaultdict
@@ -420,6 +433,54 @@ def aggregate_flow_chunks(chunks) -> pd.DataFrame:
     return result.sort_values(
         ["Origen_Id", "hour"]
     ).reset_index(drop=True)
+def find_nomenclature_file(directory: Path) -> Path:
+    """Find the most recent MiBici station nomenclature CSV."""
+
+    files = sorted(directory.glob("nomenclatura_????_??.csv"))
+
+    if not files:
+        raise FileNotFoundError(
+            f"No nomenclature CSV found in {directory}"
+        )
+
+    return files[-1]
+
+
+def read_trip_batches(
+    path: Path,
+    batch_size: int = 100_000
+):
+    """
+    Read MiBici Parquet data in batches.
+
+    Only loads the columns needed for feature engineering,
+    reducing memory usage.
+    """
+
+    parquet_file = pq.ParquetFile(path)
+
+    columns = [
+        "origen_id",
+        "destino_id",
+        "inicio_del_viaje",
+        "fin_del_viaje"
+    ]
+
+    for batch in parquet_file.iter_batches(
+        batch_size=batch_size,
+        columns=columns
+    ):
+        df = batch.to_pandas()
+
+        # Match feature engineering column names
+        df = df.rename(columns={
+            "origen_id": "Origen_Id",
+            "destino_id": "Destino_Id",
+            "inicio_del_viaje": "Inicio_del_viaje",
+            "fin_del_viaje": "Fin_del_viaje"
+        })
+
+        yield df
 
 def read_dataset(path: Path) -> pd.DataFrame:
     """Read a CSV or Parquet dataset."""
@@ -436,32 +497,81 @@ def read_dataset(path: Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported file format: {path.suffix}")
 
 
+
 @app.command()
 def main(
     trips_path: Path = PROCESSED_DATA_DIR / "dataset.parquet",
-    stations_path: Path = EXTERNAL_DATA_DIR / "nomenclatura.csv",
+    stations_path: Path | None = None,
     hourly_output: Path = PROCESSED_DATA_DIR / "hourly_features.parquet",
     profiles_output: Path = PROCESSED_DATA_DIR / "station_profiles.parquet",
 ) -> None:
-    """Generate MiBici features for P1, P2, and P3."""
+    """Generate MiBici features for P1, P2 and P3."""
 
-    logger.info("Reading MiBici datasets...")
+    logger.info("Starting Feature Engineering...")
 
-    trips = read_dataset(trips_path)
+    # Find station nomenclature
+    if stations_path is None:
+        stations_path = find_nomenclature_file(EXTERNAL_DATA_DIR)
+
     stations = read_dataset(stations_path)
 
-    logger.info("Building feature datasets...")
+    # Process large Parquet datasets in batches
+    if trips_path.suffix.lower() == ".parquet":
 
-    hourly, profiles = build_feature_datasets(trips, stations)
+        logger.info("Reading trips in batches...")
 
+        batches = read_trip_batches(
+            trips_path,
+            batch_size=100_000
+        )
+
+        # Aggregate arrivals and departures
+        flow = aggregate_flow_chunks(batches)
+
+        logger.info("Building features from hourly flows...")
+
+        hourly, profiles = build_feature_datasets_from_flow(
+            flow, stations
+        )
+
+    # Maintain CSV support for small datasets and tests
+    elif trips_path.suffix.lower() == ".csv":
+
+        trips = read_dataset(trips_path)
+
+        trips = trips.rename(columns={
+            "origen_id": "Origen_Id",
+            "destino_id": "Destino_Id",
+            "inicio_del_viaje": "Inicio_del_viaje",
+            "fin_del_viaje": "Fin_del_viaje"
+        })
+
+        hourly, profiles = build_feature_datasets(
+            trips, stations
+        )
+
+    else:
+        raise ValueError(
+            f"Unsupported trip format: {trips_path.suffix}"
+        )
+
+    # Create output directories
     hourly_output.parent.mkdir(parents=True, exist_ok=True)
     profiles_output.parent.mkdir(parents=True, exist_ok=True)
 
+    # Save datasets
     hourly.to_parquet(hourly_output, index=False)
     profiles.to_parquet(profiles_output, index=False)
 
-    logger.success("Generated {} hourly records", len(hourly))
-    logger.success("Generated {} station profiles", len(profiles))
+    logger.success(
+        "Generated {} hourly records",
+        len(hourly)
+    )
+
+    logger.success(
+        "Generated {} station profiles",
+        len(profiles)
+    )
 
 
 if __name__ == "__main__":
