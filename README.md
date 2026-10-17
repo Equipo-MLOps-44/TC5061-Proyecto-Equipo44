@@ -1,75 +1,253 @@
-# TC5061 Proyecto Equipo 44
+# TC5061 - Proyecto MiBici | Equipo 44
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
+Proyecto integrador de la materia de MLOps (TC5061), desarrollado a partir de los datos abiertos del sistema de bicicletas públicas MiBici, en Guadalajara, México.
 
-Proyecto integrador de la materia de MLOps que toma los datos de mibici para realizar un flujo de MLOps.
+El objetivo es construir un flujo reproducible de ingesta de datos, Feature Engineering, entrenamiento de modelos de Machine Learning y seguimiento de experimentos con MLflow.
 
-## Project Organization
+**Repositorio:** https://github.com/Equipo-MLOps-44/TC5061-Proyecto-Equipo44
 
+## 1. Preguntas del proyecto
+
+El proyecto busca responder tres preguntas mediante diferentes técnicas de Machine Learning.
+
+| Pregunta | Objetivo | Tipo de problema |
+|---|---|---|
+| P1 | Predecir cuántos viajes se iniciarán en una estación durante una hora futura. | Regresión |
+| P2 | Estimar si una estación estará en riesgo de quedarse sin bicicletas o sin espacios disponibles. | Clasificación |
+| P3 | Identificar grupos de estaciones que comparten patrones de utilización similares. | Clustering |
+
+P1 busca apoyar la planeación de la demanda, P2 el rebalanceo de bicicletas y P3 el análisis de estaciones para la planeación del sistema.
+
+## 2. Datos utilizados
+
+**Fuente:** [Portal de datos abiertos de MiBici](https://mibici.net/es/datos-abiertos/).
+
+El proyecto utiliza registros mensuales de viajes y el archivo de nomenclatura de estaciones, que contiene identificadores, ubicaciones y capacidades.
+
+En la ejecución realizada se procesaron:
+
+| Elemento | Cantidad |
+|---|---:|
+| Periodo | Octubre 2024 - septiembre 2026 |
+| Archivos mensuales | 24 |
+| Viajes procesados | 9,043,925 |
+| Registros por estación y hora | 6,662,294 |
+| Perfiles de estaciones | 472 |
+
+La ingesta normaliza los nombres de columnas, las codificaciones y los campos de fecha. Los datos se procesan por lotes y se almacenan en formato Parquet.
+
+El programa de descarga selecciona los 24 meses más recientes disponibles, por lo que el periodo puede cambiar en ejecuciones futuras.
+
+No se incluyen datos individuales de MiBici en GitHub. Se utilizan las variables necesarias para el análisis y se evita publicar información personal en el repositorio.
+
+### Versionamiento de datos
+
+Se implementó un mecanismo de identificación de versiones mediante hashes SHA-256.
+
+El módulo `data_version.py` calcula los hashes de los archivos CSV y del Parquet procesado, junto con sus cantidades de registros. Esta información se guarda en `references/data_manifest.json`.
+
+La versión generada para la ejecución documentada es:
+
+`e01da28b62056c69`
+
+El manifiesto permite identificar y comprobar la integridad de los archivos utilizados sin incluir los datasets en Git. Para reconstruir exactamente esta versión es necesario conservar los archivos originales correspondientes al periodo indicado.
+
+## 3. Estructura del repositorio
+
+El repositorio utiliza la plantilla Cookiecutter Data Science.
+
+```text
+TC5061-Proyecto-Equipo44/
+|
+|-- data/
+|   |-- external/
+|   |-- interim/
+|   |-- processed/
+|   |-- raw/
+|
+|-- notebooks/
+|-- references/
+|   |-- data_manifest.json
+|-- reports/
+|   |-- figures/
+|-- models/
+|-- docs/
+|
+|-- tc5061_proyecto_equipo_44/
+|   |-- config.py
+|   |-- dataset.py
+|   |-- data_version.py
+|   |-- features.py
+|   |-- modeling/
+|       |-- train.py
+|       |-- predict.py
+|
+|-- requirements.txt
+|-- pyproject.toml
+|-- .gitignore
+|-- README.md
 ```
-├── LICENSE            <- Open-source license if one is chosen
-├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
-├── README.md          <- The top-level README for developers using this project.
-├── data
-│   ├── external       <- Data from third party sources.
-│   ├── interim        <- Intermediate data that has been transformed.
-│   ├── processed      <- The final, canonical data sets for modeling.
-│   └── raw            <- The original, immutable data dump.
-│
-├── docs               <- A default mkdocs project; see www.mkdocs.org for details
-│
-├── models             <- Trained and serialized models, model predictions, or model summaries
-│
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
-│
-├── pyproject.toml     <- Project configuration file with package metadata for 
-│                         tc5061_proyecto_equipo_44 and configuration for tools like black
-│
-├── references         <- Data dictionaries, manuals, and all other explanatory materials.
-│
-├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-│   └── figures        <- Generated graphics and figures to be used in reporting
-│
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
-│
-├── setup.cfg          <- Configuration file for flake8
-│
-└── tc5061_proyecto_equipo_44   <- Source code for use in this project.
-    │
-    ├── __init__.py             <- Makes tc5061_proyecto_equipo_44 a Python module
-    │
-    ├── config.py               <- Store useful variables and configuration
-    │
-    ├── dataset.py              <- Scripts to download or generate data
-    │
-    ├── features.py             <- Code to create features for modeling
-    │
-    ├── modeling                
-    │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    └── plots.py                <- Code to create visualizations
+
+Las carpetas `data/`, `models/` y `reports/` separan los datos, los modelos y los resultados. La lógica principal de procesamiento y entrenamiento se encuentra en el módulo `tc5061_proyecto_equipo_44/`.
+
+La carpeta `notebooks/` se utiliza para el análisis exploratorio, mientras que `references/` contiene materiales de apoyo y metadatos del proyecto.
+
+## 4. Instalación
+
+Se requiere Python, Git y `uv`.
+
+**Clonar el repositorio:**
+
+```powershell
+git clone https://github.com/Equipo-MLOps-44/TC5061-Proyecto-Equipo44.git
+cd TC5061-Proyecto-Equipo44
 ```
 
-## Data ingestion
+**Crear el entorno virtual:**
 
-Run `python -m tc5061_proyecto_equipo_44.dataset` from the project directory.
-The script reads the download links published on
-[MiBici's open-data page](https://mibici.net/es/datos-abiertos/), downloads the
-latest 24 months of trip CSVs and the newest nomenclature CSV into
-`data/external`, and combines the trip data into
-`data/processed/dataset.parquet`. The nomenclature file is kept separately and
-is not mixed into the trip dataset. CSV rows are processed in bounded batches
-to limit memory use. Column names are normalized to lowercase ASCII
-`snake_case`, text is decoded from UTF-8 (or Windows-1252 for legacy files) and
-stored as Unicode, and the `inicio_del_viaje` and `fin_del_viaje` columns are
-written as Parquet timestamps. Other columns remain strings so identifiers
-retain their original formatting.
+```powershell
+uv venv
+```
 
---------
+**Instalar las dependencias:**
+
+```powershell
+uv pip install -r requirements.txt
+uv pip install -e .
+```
+
+Las dependencias del proyecto se declaran en `requirements.txt` y la configuración del paquete en `pyproject.toml`.
+
+## 5. Ejecución del pipeline
+
+Los comandos se ejecutan desde la carpeta principal del repositorio.
+
+### 5.1. Ingesta
+
+```powershell
+uv run --no-sync python -m tc5061_proyecto_equipo_44.dataset
+```
+
+Descarga y procesa los registros de MiBici y genera:
+
+`data/processed/dataset.parquet`
+
+El código también incorpora la generación del manifiesto de versionamiento al finalizar la ingesta.
+
+Para generar el manifiesto por separado, utilizando datos ya descargados:
+
+```powershell
+uv run --no-sync python -m tc5061_proyecto_equipo_44.data_version
+```
+
+### 5.2. Feature Engineering
+
+```powershell
+uv run --no-sync python -m tc5061_proyecto_equipo_44.features
+```
+
+Este proceso genera:
+
+- `data/processed/hourly_features.parquet`: información por estación y hora para P1 y P2.
+- `data/processed/station_profiles.parquet`: características agregadas de las estaciones para P3.
+
+Las transformaciones se encuentran implementadas en `features.py` como funciones reutilizables.
+
+Para P2 se aproxima el inventario a partir de la capacidad de cada estación y del flujo de salidas y llegadas. Se supone inicialmente un inventario equivalente al 75 % de la capacidad y se utilizan umbrales del 20 % para generar las etiquetas de riesgo.
+
+Estas etiquetas son estimadas, ya que los datos disponibles no contienen mediciones reales de bicicletas o espacios libres.
+
+### 5.3. Entrenamiento de modelos
+
+**P1 - Regresión:**
+
+```powershell
+uv run --no-sync python -c "from tc5061_proyecto_equipo_44.modeling.train import train_p1; train_p1()"
+```
+
+**P2 - Clasificación:**
+
+```powershell
+uv run --no-sync python -c "from tc5061_proyecto_equipo_44.modeling.train import train_p2; train_p2()"
+```
+
+**P3 - Clustering:**
+
+```powershell
+uv run --no-sync python -c "from tc5061_proyecto_equipo_44.modeling.train import train_p3; train_p3()"
+```
+
+Los modelos baseline utilizados son:
+
+| Pregunta | Modelo | Métricas de evaluación |
+|---|---|---|
+| P1 | DummyRegressor | MAE y RMSE |
+| P2 | DummyClassifier | Accuracy, F1 y Recall |
+| P3 | KMeans | Silhouette Score |
+
+Para P1 y P2 se utiliza una división cronológica entre entrenamiento y prueba, con el objetivo de evitar incorporar información futura en el entrenamiento.
+
+En P3 se utilizan perfiles históricos agregados para identificar grupos de estaciones.
+
+## 6. Experimentos con MLflow
+
+El seguimiento de experimentos se realiza mediante MLflow Tracking.
+
+**Nombre del experimento:** `mibici-equipo44`
+
+Se registraron cuatro ejecuciones baseline: una para P1, dos para P2 (una por cada variable de riesgo) y una para P3.
+
+Los runs incluyen parámetros, métricas, etiquetas y artefactos, así como referencias al código utilizado. El registro explícito de la versión del manifiesto de datos en MLflow queda pendiente.
+
+Para consultar la interfaz:
+
+```powershell
+uv run --no-sync mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+
+Abrir en el navegador:
+
+http://127.0.0.1:5000
+
+Los archivos locales de experimentos y modelos no se incluyen en GitHub.
+
+## 7. Buenas prácticas y reproducibilidad
+
+El proyecto aplica las siguientes prácticas:
+
+- **Separación del código:** ingesta, características y entrenamiento se implementan en módulos independientes.
+- **Configuración:** las rutas y variables compartidas se administran mediante `config.py`.
+- **Datos:** los archivos originales y procesados se mantienen separados.
+- **Versionamiento:** se utiliza un manifiesto con hashes SHA-256 para identificar los datos procesados.
+- **Evaluación temporal:** P1 y P2 utilizan una partición cronológica para reducir el riesgo de fuga de información futura.
+- **Experimentos:** MLflow permite consultar parámetros, métricas, etiquetas y artefactos.
+- **Git:** `.gitignore` excluye datos, modelos serializados, archivos locales de MLflow y credenciales.
+
+Los archivos generados localmente no deben incorporarse al historial de Git.
+
+## 8. Flujo de trabajo con Git y GitHub
+
+El equipo desarrolla sus cambios mediante ramas independientes y Pull Requests.
+
+El flujo de trabajo consiste en:
+
+1. Actualizar la rama compartida `develop`.
+2. Crear una rama para la funcionalidad o corrección.
+3. Implementar y probar los cambios.
+4. Crear commits descriptivos.
+5. Subir la rama a GitHub.
+6. Abrir un Pull Request hacia `develop`.
+7. Revisar e integrar los cambios.
+
+Se utilizan nombres descriptivos para las ramas, como `fix/modeling-dependencies` y `docs/project-documentation`, así como convenciones de commits como `feat:`, `fix:` y `docs:`.
+
+La actividad establece que la rama principal debe estar protegida y que cada integrante debe abrir al menos un Pull Request y realizar al menos una revisión. Estas condiciones deben comprobarse en GitHub antes de la entrega.
+
+## 9. Integrantes del equipo
+
+| Integrante | Matrícula | Responsabilidad principal |
+|---|---|---|
+| Axel Dair Torrecilla Hernández | A01797810 | Desarrollo y entrenamiento de los modelos baseline |
+| Guillermo Navarro García | A01282490 | Feature Engineering para P1, P2 y P3 |
+| José Andrés Orantes Guillén | A01174130 | Análisis exploratorio de datos (EDA) |
+| José Luis Navarro Hernandez | A01840092 | Ingesta, normalización y preparación de datos |

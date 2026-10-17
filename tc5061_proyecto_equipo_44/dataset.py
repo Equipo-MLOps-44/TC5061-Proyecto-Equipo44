@@ -414,19 +414,39 @@ def ingest_csv_files(
     return output_path
 
 
+
 @app.command()
 def main(
     source_dir: Path = EXTERNAL_DATA_DIR,
     output_path: Path = PROCESSED_DATA_DIR / "dataset.parquet",
 ) -> None:
-    """@brief Run the complete MiBici download and trip-ingestion workflow.
+    """Run the complete MiBici download and ingestion workflow.
 
     @param source_dir Directory for downloaded CSVs and CSV ingestion.
     @param output_path Destination Parquet path for the combined trip dataset.
     """
+
     downloaded_paths = download_recent_data(source_dir)
-    monthly_paths = [path for path in downloaded_paths if MONTHLY_FILENAME_RE.fullmatch(path.name)]
-    ingest_csv_files(source_dir, output_path, csv_paths=monthly_paths)
+
+    monthly_paths = [
+        path
+        for path in downloaded_paths
+        if MONTHLY_FILENAME_RE.fullmatch(path.name)
+    ]
+
+    ingest_csv_files(
+        source_dir,
+        output_path,
+        csv_paths=monthly_paths,
+    )
+
+    # Generar manifiesto para versionar los datos
+    from .data_version import create_data_manifest
+
+    create_data_manifest(
+        source_files=downloaded_paths,
+        parquet_path=output_path,
+    )
 
 
 if __name__ == "__main__":
