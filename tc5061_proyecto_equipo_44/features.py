@@ -438,7 +438,7 @@ def read_dataset(path: Path) -> pd.DataFrame:
 
 @app.command()
 def main(
-    trips_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
+    trips_path: Path = PROCESSED_DATA_DIR / "dataset.parquet",
     stations_path: Path = EXTERNAL_DATA_DIR / "nomenclatura.csv",
     hourly_output: Path = PROCESSED_DATA_DIR / "hourly_features.parquet",
     profiles_output: Path = PROCESSED_DATA_DIR / "station_profiles.parquet",

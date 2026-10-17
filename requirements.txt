@@ -2,6 +2,7 @@ black
 flake8
 isort
 loguru
+pyarrow
 mkdocs
 pip
 pytest
