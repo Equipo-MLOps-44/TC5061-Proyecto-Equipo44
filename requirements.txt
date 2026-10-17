@@ -2,11 +2,12 @@ black
 flake8
 isort
 loguru
-pyarrow
 mkdocs
 pip
 pytest
 python-dotenv
 tqdm
 typer
+pandas==2.3.3
+pyarrow==25.0.1
 -e .
