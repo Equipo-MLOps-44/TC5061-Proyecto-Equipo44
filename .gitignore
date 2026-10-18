@@ -192,3 +192,6 @@ cython_debug/
 # MLflow local experiments
 mlruns/
 mlflow.db*
+# Generated model artifacts
+models/*.joblib
+reports/p3_station_clusters.csv
