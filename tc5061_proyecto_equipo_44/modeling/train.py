@@ -1,6 +1,8 @@
 """Train baseline models for P1, P2 and P3 and track them in MLflow."""
 
+import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import pandas as pd
 from loguru import logger
 from sklearn.cluster import KMeans
 from sklearn.dummy import DummyClassifier, DummyRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -31,7 +34,7 @@ from tc5061_proyecto_equipo_44.config import (
 )
 
 MLFLOW_EXPERIMENT_NAME = "mibici-equipo44"
-MLFLOW_TRACKING_URI = "sqlite:///mlflow.db"
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
 
 RANDOM_STATE = 0
 TEST_SIZE = 0.30
@@ -45,7 +48,9 @@ PROFILES_PATH = PROCESSED_DATA_DIR / "station_profiles.parquet"
 def configure_mlflow() -> None:
     """Configure local MLflow tracking."""
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    # MLflow Projects may provide an active run/experiment. Reuse it when present.
+    if not os.getenv("MLFLOW_RUN_ID"):
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
     logger.info("MLflow URI: {}", mlflow.get_tracking_uri())
     logger.info("MLflow experiment: {}", MLFLOW_EXPERIMENT_NAME)
@@ -86,62 +91,59 @@ def log_mlflow_run(
     """Log parameters, metrics, tags and existing artifacts to MLflow."""
     commit = get_git_commit()
 
-    with mlflow.start_run(run_name=run_name):
-        # MLflow parameters must be scalar-compatible values.
-        safe_params = {**params, "git_commit": commit}
+    active_run = mlflow.active_run()
+    projects_run_id = os.getenv("MLFLOW_RUN_ID")
+    if active_run is not None or projects_run_id:
+        # Create one child run per selected model under the MLflow Projects run.
+        with mlflow.start_run(run_name=run_name, nested=True):
+            _log_run_contents(run_name, params, metrics, tags, artifact_paths, commit)
+    else:
+        with mlflow.start_run(run_name=run_name):
+            _log_run_contents(run_name, params, metrics, tags, artifact_paths, commit)
 
-        for key, value in safe_params.items():
-            if isinstance(value, (list, tuple, dict)):
-                value = json.dumps(
-                    value,
-                    ensure_ascii=False,
-                    default=str,
-                )
 
-            mlflow.log_param(key, value)
+def _log_run_contents(
+    run_name: str,
+    params: dict,
+    metrics: dict,
+    tags: dict,
+    artifact_paths: list | None,
+    commit: str,
+) -> None:
+    safe_params = {**params, "git_commit": commit}
+    for key, value in safe_params.items():
+        if isinstance(value, (list, tuple, dict)):
+            value = json.dumps(value, ensure_ascii=False, default=str)
+        mlflow.log_param(key, value)
 
-        safe_tags = {
-            **tags,
-            "team": TEAM_TAG,
-            "project": "MiBici",
-            "git_commit": commit,
-        }
-        mlflow.set_tags(
-            {key: str(value) for key, value in safe_tags.items()}
-        )
+    safe_tags = {
+        **tags,
+        "team": TEAM_TAG,
+        "project": "MiBici",
+        "git_commit": commit,
+        "model_run_name": run_name,
+    }
+    mlflow.set_tags({key: str(value) for key, value in safe_tags.items()})
 
-        # P1/P2 metrics are test metrics. P3 uses data_ metrics.
-        numeric_metrics = {}
+    numeric_metrics = {}
+    for key, value in metrics.items():
+        if (
+            isinstance(value, (int, float, np.integer, np.floating))
+            and not isinstance(value, (bool, np.bool_))
+            and np.isfinite(value)
+        ):
+            metric_name = key if key.startswith(("test_", "data_")) else f"test_{key}"
+            numeric_metrics[metric_name] = float(value)
+    if numeric_metrics:
+        mlflow.log_metrics(numeric_metrics)
 
-        for key, value in metrics.items():
-            if (
-                isinstance(value, (int, float, np.integer, np.floating))
-                and not isinstance(value, (bool, np.bool_))
-                and np.isfinite(value)
-            ):
-                metric_name = (
-                    key
-                    if key.startswith(("test_", "data_"))
-                    else f"test_{key}"
-                )
-                numeric_metrics[metric_name] = float(value)
-
-        if numeric_metrics:
-            mlflow.log_metrics(numeric_metrics)
-
-        # Log only files that exist.
-        for artifact in artifact_paths or []:
-            artifact_path = Path(artifact)
-
-            if artifact_path.is_file():
-                mlflow.log_artifact(str(artifact_path))
-            else:
-                logger.warning(
-                    "Artifact not found; not logged: {}",
-                    artifact_path,
-                )
-
-        logger.info("MLflow run logged: {}", run_name)
+    for artifact in artifact_paths or []:
+        artifact_path = Path(artifact)
+        if artifact_path.is_file():
+            mlflow.log_artifact(str(artifact_path))
+        else:
+            logger.warning("Artifact not found; not logged: {}", artifact_path)
+    logger.info("MLflow results logged for: {}", run_name)
 
 
 def chronological_split(
@@ -171,7 +173,7 @@ def chronological_split(
     return train, test, split_time
 
 
-def train_p1() -> dict:
+def train_p1(model_name: str = "baseline", n_estimators: int = 300, max_depth: int = 15, random_state: int = 0) -> dict:
     """
     P1: estimate hourly station departures using a mean baseline.
 
@@ -252,27 +254,43 @@ def train_p1() -> dict:
         X_test.shape,
     )
 
-    # The baseline predicts the training-set mean for every test row.
-    # Placeholder input is intentional: this is a reference baseline,
-    # not the future feature-based model.
-    mean_model = DummyRegressor(strategy="mean")
-    mean_model.fit(np.zeros((len(y_train), 1)), y_train)
+    # Exclude station ID from RF inputs to avoid treating IDs as continuous values.
+    numeric_features = [feature for feature in p1_features if feature != "Origen_Id"]
+    X_train_model = X_train[numeric_features].apply(pd.to_numeric, errors="coerce")
+    X_test_model = X_test[numeric_features].apply(pd.to_numeric, errors="coerce")
+    medians = X_train_model.median().fillna(0)
+    X_train_model = X_train_model.fillna(medians)
+    X_test_model = X_test_model.fillna(medians)
 
-    predictions = mean_model.predict(
-        np.zeros((len(y_test), 1))
-    )
+    if model_name == "baseline":
+        model = DummyRegressor(strategy="mean")
+        model.fit(np.zeros((len(y_train), 1)), y_train)
+        predictions = model.predict(np.zeros((len(y_test), 1)))
+        model_filename = "p1_mean_baseline.joblib"
+        model_type = "mean_baseline"
+    elif model_name == "rf":
+        model = RandomForestRegressor(
+            n_estimators=n_estimators, max_depth=max_depth,
+            random_state=random_state, n_jobs=-1,
+        )
+        model.fit(X_train_model, y_train)
+        predictions = model.predict(X_test_model)
+        model_filename = "p1_random_forest.joblib"
+        model_type = "random_forest_regressor"
+    else:
+        raise ValueError("P1 model must be 'baseline' or 'rf'.")
 
     mae = mean_absolute_error(y_test, predictions)
     rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    model_path = MODELS_DIR / "p1_mean_baseline.joblib"
-    joblib.dump(mean_model, model_path)
+    model_path = MODELS_DIR / model_filename
+    joblib.dump(model, model_path)
 
     results = {
         "task": "P1_regression",
         "target": "departures",
-        "baseline": "DummyRegressor(strategy=mean)",
+        "model": model_name,
         "split": "chronological",
         "split_time": str(split_time),
         "test_size": TEST_SIZE,
@@ -287,12 +305,14 @@ def train_p1() -> dict:
     }
 
     log_mlflow_run(
-        run_name="P1_mean_baseline",
+        run_name=f"P1_{model_name}",
         params={
             "task": "P1_regression",
             "target": "departures",
-            "baseline": "DummyRegressor",
-            "strategy": "mean",
+            "model": model_name,
+            "n_estimators": n_estimators if model_name == "rf" else "not_applicable",
+            "max_depth": max_depth if model_name == "rf" else "not_applicable",
+            "random_state": random_state,
             "test_size": TEST_SIZE,
             "split": "chronological",
             "split_time": str(split_time),
@@ -312,16 +332,16 @@ def train_p1() -> dict:
         tags={
             "problem": "P1",
             "question": "demand_prediction",
-            "model_type": "mean_baseline",
+            "model_type": model_type,
         },
         artifact_paths=[model_path],
     )
 
-    logger.success("P1 mean baseline completed.")
+    logger.success("P1 {} completed.", model_name)
     return results
 
 
-def train_p2() -> dict | None:
+def train_p2(model_name: str = "baseline", n_estimators: int = 300, max_depth: int = 15, class_weight: str = "balanced", random_state: int = 0) -> dict | None:
     """
     P2: majority-class baselines for station risk indicators.
 
@@ -411,10 +431,20 @@ def train_p2() -> dict | None:
         X_train = X_train.fillna(medians)
         X_test = X_test.fillna(medians)
 
-        model = DummyClassifier(
-            strategy="most_frequent",
-            random_state=RANDOM_STATE,
-        )
+        if model_name == "baseline":
+            model = DummyClassifier(strategy="most_frequent", random_state=random_state)
+            model_type = "majority_class_baseline"
+        elif model_name == "rf":
+            model = RandomForestClassifier(
+                n_estimators=n_estimators,
+                max_depth=max_depth,
+                class_weight=None if class_weight.lower() in {"none", "null", ""} else class_weight,
+                random_state=random_state,
+                n_jobs=-1,
+            )
+            model_type = "random_forest_classifier"
+        else:
+            raise ValueError("P2 model must be 'baseline' or 'rf'.")
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
 
@@ -463,9 +493,9 @@ def train_p2() -> dict | None:
         }
 
         if target == "risk_no_bikes":
-            model_filename = "p2_no_bikes_dummy_baseline.joblib"
+            model_filename = f"p2_no_bikes_{model_name}.joblib"
         else:
-            model_filename = "p2_no_docks_dummy_baseline.joblib"
+            model_filename = f"p2_no_docks_{model_name}.joblib"
 
         model_path = MODELS_DIR / model_filename
 
@@ -479,12 +509,15 @@ def train_p2() -> dict | None:
         )
 
         log_mlflow_run(
-            run_name=f"P2_{target}_majority_baseline",
+            run_name=f"P2_{target}_{model_name}",
             params={
                 "task": "P2_classification",
                 "target": target,
-                "strategy": "most_frequent",
-                "random_state": RANDOM_STATE,
+                "model": model_name,
+                "n_estimators": n_estimators if model_name == "rf" else "not_applicable",
+                "max_depth": max_depth if model_name == "rf" else "not_applicable",
+                "class_weight": class_weight if model_name == "rf" else "not_applicable",
+                "random_state": random_state,
                 "test_size": TEST_SIZE,
                 "split": "chronological_by_timestamp",
                 "split_time": str(split_time),
@@ -503,7 +536,7 @@ def train_p2() -> dict | None:
             tags={
                 "problem": "P2",
                 "question": target,
-                "model_type": "majority_class_baseline",
+                "model_type": model_type,
             },
             artifact_paths=[model_path],
         )
@@ -517,7 +550,7 @@ def train_p2() -> dict | None:
     return results or None
 
 
-def train_p3() -> dict:
+def train_p3(n_clusters: int = 3, random_state: int = 0, n_init: int = 10) -> dict:
     """P3: cluster station profiles using KMeans with three clusters."""
     df = pd.read_parquet(PROFILES_PATH)
 
@@ -538,22 +571,18 @@ def train_p3() -> dict:
     )
     X = X.fillna(X.median()).fillna(0)
 
-    if len(X) <= N_CLUSTERS:
-        raise ValueError(
-            f"P3 needs more than {N_CLUSTERS} station records."
-        )
+    if len(X) <= n_clusters:
+        raise ValueError(f"P3 needs more than {n_clusters} station records.")
 
-    if len(X.drop_duplicates()) < N_CLUSTERS:
-        raise ValueError(
-            "P3 has fewer distinct profiles than clusters."
-        )
+    if len(X.drop_duplicates()) < n_clusters:
+        raise ValueError("P3 has fewer distinct profiles than clusters.")
 
     model = make_pipeline(
         StandardScaler(),
         KMeans(
-            n_clusters=N_CLUSTERS,
-            random_state=RANDOM_STATE,
-            n_init=10,
+            n_clusters=n_clusters,
+            random_state=random_state,
+            n_init=n_init,
         ),
     )
 
@@ -572,7 +601,7 @@ def train_p3() -> dict:
     results = {
         "task": "P3_clustering",
         "features": feature_columns,
-        "n_clusters": N_CLUSTERS,
+        "n_clusters": n_clusters,
         "stations": len(X),
         "silhouette_score": silhouette,
         "cluster_sizes": cluster_sizes,
@@ -581,8 +610,8 @@ def train_p3() -> dict:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_path = MODELS_DIR / "p3_kmeans_baseline.joblib"
-    clusters_path = REPORTS_DIR / "p3_station_clusters.csv"
+    model_path = MODELS_DIR / f"p3_kmeans_{n_clusters}_clusters.joblib"
+    clusters_path = REPORTS_DIR / f"p3_station_clusters_{n_clusters}.csv"
 
     joblib.dump(
         {
@@ -597,13 +626,13 @@ def train_p3() -> dict:
     output.to_csv(clusters_path, index=False)
 
     log_mlflow_run(
-        run_name="P3_kmeans_3_clusters",
+        run_name=f"P3_kmeans_{n_clusters}_clusters",
         params={
             "task": "P3_clustering",
             "algorithm": "KMeans",
-            "n_clusters": N_CLUSTERS,
-            "random_state": RANDOM_STATE,
-            "n_init": 10,
+            "n_clusters": n_clusters,
+            "random_state": random_state,
+            "n_init": n_init,
             "features": feature_columns,
             "stations": len(X),
             **dataset_metadata(PROFILES_PATH),
@@ -623,35 +652,43 @@ def train_p3() -> dict:
         ],
     )
 
-    logger.success("P3 KMeans baseline completed.")
+    logger.success("P3 KMeans with {} clusters completed.", n_clusters)
     return results
 
 
 def main() -> None:
-    """Run all baselines and track results in MLflow."""
+    """Train only the selected question/model and track it in MLflow."""
+    parser = argparse.ArgumentParser(description="Train a selected MiBici model.")
+    parser.add_argument("--question", choices=["p1", "p2", "p3"], default="p1")
+    parser.add_argument("--model", choices=["baseline", "rf", "kmeans"], default="baseline")
+    parser.add_argument("--n-estimators", type=int, default=300)
+    parser.add_argument("--max-depth", type=int, default=15)
+    parser.add_argument("--class-weight", type=str, default="balanced")
+    parser.add_argument("--n-clusters", type=int, default=3)
+    parser.add_argument("--random-state", type=int, default=0)
+    parser.add_argument("--n-init", type=int, default=10)
+    args = parser.parse_args()
+
+    allowed = {"p1": {"baseline", "rf"}, "p2": {"baseline", "rf"}, "p3": {"kmeans"}}
+    if args.model not in allowed[args.question]:
+        parser.error(f"model={args.model} is not valid for question={args.question}; choose {sorted(allowed[args.question])}.")
+    if args.n_estimators < 1 or args.max_depth < 1 or args.n_clusters < 2 or args.n_init < 1:
+        parser.error("n_estimators, max_depth, n_init must be positive and n_clusters must be at least 2.")
+
     configure_mlflow()
+    required_path = PROFILES_PATH if args.question == "p3" else HOURLY_PATH
+    if not required_path.exists():
+        raise FileNotFoundError(f"Required feature dataset not found: {required_path}")
 
-    for path in [HOURLY_PATH, PROFILES_PATH]:
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Required feature dataset not found: {path}"
-            )
+    if args.question == "p1":
+        result = train_p1(args.model, args.n_estimators, args.max_depth, args.random_state)
+    elif args.question == "p2":
+        result = train_p2(args.model, args.n_estimators, args.max_depth, args.class_weight, args.random_state)
+    else:
+        result = train_p3(args.n_clusters, args.random_state, args.n_init)
 
-    results = {
-        "P1": train_p1(),
-        "P2": train_p2(),
-        "P3": train_p3(),
-    }
-
-    logger.info("Baseline training summary:")
-
-    for task, result in results.items():
-        status = (
-            "skipped (targets unavailable)"
-            if result is None
-            else "completed"
-        )
-        logger.info("{}: {}", task, status)
+    logger.info("Training completed: question={}, model={}", args.question, args.model)
+    logger.info("Result summary: {}", result)
 
 
 if __name__ == "__main__":
