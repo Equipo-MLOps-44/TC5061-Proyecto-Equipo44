@@ -96,6 +96,18 @@ La carpeta `notebooks/` se utiliza para el análisis exploratorio, mientras que 
 
 Se requiere Python, Git y `uv`.
 
+**Instalar `uv` en Windows** (si el comando `uv` no está disponible):
+
+```powershell
+winget install --id astral-sh.uv -e
+```
+
+Cierra y vuelve a abrir PowerShell y comprueba la instalación:
+
+```powershell
+uv --version
+```
+
 **Clonar el repositorio:**
 
 ```powershell
@@ -103,24 +115,53 @@ git clone https://github.com/Equipo-MLOps-44/TC5061-Proyecto-Equipo44.git
 cd TC5061-Proyecto-Equipo44
 ```
 
-**Crear el entorno virtual:**
+**Crear y activar el entorno virtual (PowerShell):**
 
 ```powershell
-uv venv
+uv venv --python 3.10
+.\.venv\Scripts\Activate.ps1
 ```
 
-**Instalar las dependencias:**
+**Instalar las dependencias**, incluido MLflow:
 
 ```powershell
 uv pip install -r requirements.txt
-uv pip install -e .
 ```
 
-Las dependencias del proyecto se declaran en `requirements.txt` y la configuración del paquete en `pyproject.toml`.
+Confirma que MLflow quedó disponible en el entorno activo:
+
+```powershell
+python -m mlflow --version
+```
+
+`requirements.txt` instala el proyecto en modo editable y contiene MLflow; no hace falta instalarlo por separado.
 
 ## 5. Ejecución del pipeline
 
 Los comandos se ejecutan desde la carpeta principal del repositorio.
+
+### Ejecutar el MLproject con MLflow
+
+El archivo `MLproject` define los entry points `ingest`, `features` y `train`.
+`python_env.yaml` especifica Python 3.10 y las dependencias del proyecto para MLflow;
+los comandos de abajo usan el entorno virtual ya instalado y activado.
+
+```powershell
+python -m mlflow run . -e ingest --env-manager=local --experiment-name mibici-equipo44
+python -m mlflow run . -e features --env-manager=local --experiment-name mibici-equipo44
+python -m mlflow run . -e train --env-manager=local --experiment-name mibici-equipo44 -P question=p1 -P model=baseline
+```
+
+Para ejecutar otra pregunta, sustituye `p1` por `p2` o `p3`. P3 requiere `model=kmeans`:
+
+```powershell
+python -m mlflow run . -e train --env-manager=local --experiment-name mibici-equipo44 -P question=p3 -P model=kmeans
+```
+
+`--env-manager=local` ejecuta los entry points en el entorno virtual activo. Mantén ese entorno
+activado en la terminal donde corres estos comandos. `--experiment-name mibici-equipo44` asigna
+tanto la ejecución de MLflow Projects como sus ejecuciones anidadas al experimento del proyecto;
+sin esta opción, MLflow Projects puede usar `Default`.
 
 ### 5.1. Ingesta
 
