@@ -1,0 +1,74 @@
+name: mibici-equipo44
+
+python_env: python_env.yaml
+
+entry_points:
+  ingest:
+    parameters:
+      source_dir:
+        type: str
+        default: "data/external"
+      output_path:
+        type: str
+        default: "data/processed/dataset.parquet"
+    command: >-
+      python -m tc5061_proyecto_equipo_44.dataset
+      --source-dir {source_dir}
+      --output-path {output_path}
+
+  features:
+    parameters:
+      trips_path:
+        type: str
+        default: "data/processed/dataset.parquet"
+      stations_path:
+        type: str
+        default: "none"
+      hourly_output:
+        type: str
+        default: "data/processed/hourly_features.parquet"
+      profiles_output:
+        type: str
+        default: "data/processed/station_profiles.parquet"
+    command: >-
+      python -m tc5061_proyecto_equipo_44.features
+      --trips-path {trips_path}
+      --hourly-output {hourly_output}
+      --profiles-output {profiles_output}
+
+  train:
+    parameters:
+      question:
+        type: str
+        default: "p1"
+      model:
+        type: str
+        default: "baseline"
+      n_estimators:
+        type: int
+        default: 300
+      max_depth:
+        type: int
+        default: 15
+      class_weight:
+        type: str
+        default: "balanced"
+      n_clusters:
+        type: int
+        default: 3
+      random_state:
+        type: int
+        default: 0
+      n_init:
+        type: int
+        default: 10
+    command: >-
+      python -m tc5061_proyecto_equipo_44.modeling.train
+      --question {question}
+      --model {model}
+      --n-estimators {n_estimators}
+      --max-depth {max_depth}
+      --class-weight {class_weight}
+      --n-clusters {n_clusters}
+      --random-state {random_state}
+      --n-init {n_init}
