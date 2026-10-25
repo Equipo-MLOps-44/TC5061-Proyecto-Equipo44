@@ -195,3 +195,6 @@ mlflow.db*
 # Generated model artifacts
 models/*.joblib
 reports/p3_station_clusters.csv
+# Generated P1 experiment outputs
+reports/figures/p1_rf_*.png
+reports/p1_rf_config.json

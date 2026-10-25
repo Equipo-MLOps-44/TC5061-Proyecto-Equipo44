@@ -24,6 +24,7 @@ from .mlflow_utils import log_mlflow_run
 RANDOM_STATE = 0
 TEST_SIZE = 0.30
 HOURLY_PATH = PROCESSED_DATA_DIR / "hourly_features.parquet"
+MANIFEST_PATH = Path(__file__).resolve().parents[2] / "references" / "data_manifest.json"
 
 
 def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int = 15,random_state: int = 0,) -> dict:
@@ -194,6 +195,9 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
             "station_id_treated_as": "categorical",
             "data_start_time": str(df["hour"].min()),
             "data_end_time": str(df["hour"].max()),
+            "data_version": json.loads(
+                MANIFEST_PATH.read_text(encoding="utf-8")
+            )["version"],
             **dataset_metadata(HOURLY_PATH),
         },
         metrics={"mae": mae, "rmse": rmse},
@@ -201,7 +205,7 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
         artifact_paths=[model_path],
         model=model,
         input_example=model_input_example,
-        artifact_dirs={"plots": [actual_vs_predicted_path, residuals_path],"config": [config_path],},
+        artifact_dirs={"plots": [actual_vs_predicted_path, residuals_path],"config": [config_path],"data": [MANIFEST_PATH],},
         input_dataset=training_dataset,
     )
 
