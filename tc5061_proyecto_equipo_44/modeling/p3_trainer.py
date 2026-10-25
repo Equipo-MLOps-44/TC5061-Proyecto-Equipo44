@@ -11,15 +11,19 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from loguru import logger
 from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score, silhouette_samples
 import mlflow
+from mlflow.models import infer_signature
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import ParameterGrid
 
 from tc5061_proyecto_equipo_44.config import (MODELS_DIR,PROCESSED_DATA_DIR,REPORTS_DIR,)
 
 from .data_utils import dataset_metadata
 from .mlflow_utils import log_mlflow_run
+from typing import Any
 
 RANDOM_STATE = 0
 N_CLUSTERS = 3
@@ -28,7 +32,7 @@ HOURLY_PATH = PROCESSED_DATA_DIR / "hourly_features.parquet"
 PROFILES_PATH = PROCESSED_DATA_DIR / "station_profiles.parquet"
 
 
-def train_p3(n_clusters: int = 3, random_state: int = 0, n_init: int = 10) -> dict:
+def train_p3(model_name: str = "k_means", n_clusters: int = 3, random_state: int = 0, n_init: int = 10) -> dict:
     """P3: cluster station profiles using KMeans with three clusters."""
     df = pd.read_parquet(PROFILES_PATH)
 
@@ -53,6 +57,15 @@ def train_p3(n_clusters: int = 3, random_state: int = 0, n_init: int = 10) -> di
     if len(X.drop_duplicates()) < n_clusters:
         raise ValueError("P3 has fewer distinct profiles than clusters.")
 
+    if model_name == "k_means":
+        return _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init)
+    elif model_name == "search":
+        return multimodel_search(X,random_state)
+        
+    
+
+
+def _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init):
     model = make_pipeline(
         StandardScaler(),
         KMeans(n_clusters=n_clusters,random_state=random_state,n_init=n_init,),
@@ -183,3 +196,81 @@ def train_p3(n_clusters: int = 3, random_state: int = 0, n_init: int = 10) -> di
         input_dataset=training_dataset,
     )
     return results
+
+# Nest run 
+def multimodel_search(X: pd.DataFrame, random_state:int) -> dict[str, Any]:
+    """Evaluation of clustering method through nested runs"""
+    search_space = {
+        "kmeans": {
+            "model_class": KMeans,
+            "param_grid": list(ParameterGrid({
+                "n_clusters": range(3,10),
+                "init": ["k-means++", "random"],
+                "n_init": [10, 20],
+                "random_state": [random_state]
+            }))
+        },
+        "gmm": {
+            "model_class": GaussianMixture,
+            "param_grid": list(ParameterGrid({
+                "n_components": range(3,10),
+                "covariance_type": ["full", "tied", "diag"],
+                "random_state": [random_state]
+            }))
+        }
+    }
+    
+    best_score = -1
+    best_run_id = None
+    best_model_name = None
+
+
+    with mlflow.start_run(run_name="P3_multimodel_Hyperparameter_Search") as parent_run:
+        mlflow.set_tags({"question": "p3", "stage_of_work": "search"})
+
+        for model_family, config in search_space.items():
+            for i, params in enumerate(config["param_grid"]):
+                    k_val = params.get("n_clusters", params.get("n_components"))
+                    run_name = f"{model_family}_k{k_val}_var{i}"
+
+                    with mlflow.start_run(run_name=run_name, nested=True) as child_run:
+                        mlflow.set_tags({"question": "p3", "model_family":model_family, "stage_of_work": "candidate"})
+                        mlflow.log_params(params)
+
+                        model = config["model_class"](**params)
+
+                        if model_family == "gmm":
+                            model.fit(X)
+                            labels = model.predict(X)
+
+                        else:
+                            labels = model.fit_predict(X)
+
+                        score = float(silhouette_score(X, labels))
+                        mlflow.log_metric("silhouette_score", score)
+
+                        # Saving station profiles as artifact
+                        profiles_df = X.copy()
+                        profiles_df['clusters'] = labels
+                        cluster_centers = profiles_df.groupby('clusters').mean()
+                        temp_csv = f"profiles_{model_family}_k{k_val}.csv"
+                        cluster_centers.to_csv(temp_csv)
+                        mlflow.log_artifact(temp_csv, artifact_path="cluter_profiles")
+                        Path(temp_csv).unlink()
+
+                        signature = infer_signature(X, labels)
+                        mlflow.sklearn.log_model(model, "model", signature=signature, input_example=X.head())
+
+                        if score > best_score:
+                            best_score = score
+                            best_run_id = child_run.info.run_id
+                            best_model_name = run_name
+
+        if best_run_id:
+            model_uri = f"runs:/{best_run_id}/model"
+            mlflow.register_model(model_uri=model_uri, name="P3_Clustering_Model")
+            mlflow.set_tag("best_candidate_run_id", best_run_id)
+            logger.success(f"Mejor modelo: {best_model_name} (Silohuette: {best_score:.4f})")
+
+    return {"best_model": best_model_name, "best_silhouette_Score": best_score}
+
