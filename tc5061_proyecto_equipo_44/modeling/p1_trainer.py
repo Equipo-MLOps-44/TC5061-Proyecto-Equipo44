@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import joblib
 import matplotlib
@@ -14,11 +15,15 @@ from loguru import logger
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import ParameterGrid
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVR
 
 from tc5061_proyecto_equipo_44.config import (MODELS_DIR,PROCESSED_DATA_DIR,REPORTS_DIR,)
 
 from .data_utils import chronological_split, dataset_metadata
-from .mlflow_utils import log_mlflow_run
+from .mlflow_utils import log_mlflow_run, log_model_with_signature
 
 
 RANDOM_STATE = 0
@@ -79,7 +84,16 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
     X_train_model = X_train_model.fillna(medians)
     X_test_model = X_test_model.fillna(medians)
 
-    if model_name == "baseline":
+    if model_name == "search":
+        return multimodel_search(
+            X_train_model,
+            y_train,
+            X_test_model,
+            y_test,
+            training_dataset,
+            random_state,
+        )
+    elif model_name == "baseline":
         model = DummyRegressor(strategy="mean")
         baseline_train_input = np.zeros((len(y_train), 1))
         model.fit(baseline_train_input, y_train)
@@ -95,7 +109,7 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
         model_type = "random_forest_regressor"
         model_filename = "p1_random_forest.joblib"
     else:
-        raise ValueError("P1 model must be 'baseline' or 'rf'.")
+        raise ValueError("P1 model must be 'baseline', 'rf', or 'search'.")
 
     mae = float(mean_absolute_error(y_test, predictions))
     rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
@@ -211,3 +225,146 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
 
     logger.success("P1 {} completed.", model_name)
     return results
+
+
+def multimodel_search(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_test: pd.DataFrame,
+    y_test: np.ndarray,
+    training_dataset: Any,
+    random_state: int,
+) -> dict:
+    """Compare P1 Random Forest and LinearSVR configurations using nested MLflow runs."""
+    search_space = {
+        "random_forest": {
+            "model_class": RandomForestRegressor,
+            "param_grid": list(
+                ParameterGrid(
+                    {
+                        "n_estimators": [100],
+                        "max_depth": [10, 15],
+                        "random_state": [random_state],
+                        "n_jobs": [-1],
+                    }
+                )
+            ),
+        },
+        "linear_svr": {
+            "model_class": LinearSVR,
+            "param_grid": list(
+                ParameterGrid(
+                    {
+                        "C": [0.1, 1.0],
+                        "epsilon": [0.1],
+                        "max_iter": [10000],
+                        "random_state": [random_state],
+                    }
+                )
+            ),
+        },
+    }
+    candidate_count = sum(
+        len(config["param_grid"]) for config in search_space.values()
+    )
+    best_candidate = None
+    candidates = []
+
+    with mlflow.start_run(
+        run_name="P1_Multimodel_Hyperparameter_Search",
+        nested=mlflow.active_run() is not None,
+    ) as parent_run:
+        mlflow.set_tags(
+            {
+                "problem": "P1",
+                "question": "p1",
+                "stage_of_work": "hyperparameter_search",
+                "team": "equipo44",
+            }
+        )
+        mlflow.log_params(
+            {
+                "search_type": "parameter_grid",
+                "candidate_count": candidate_count,
+                "selection_metric": "mae",
+                "random_state": random_state,
+            }
+        )
+
+        for model_family, config in search_space.items():
+            for index, params in enumerate(config["param_grid"], start=1):
+                candidate_name = f"{model_family}_{index:02d}"
+                model_params = params
+                if model_family == "linear_svr":
+                    model = make_pipeline(
+                        StandardScaler(),
+                        config["model_class"](**params),
+                    )
+                    model_params = {
+                        **params,
+                        "scaler": "StandardScaler",
+                    }
+                else:
+                    model = config["model_class"](**params)
+
+                with mlflow.start_run(
+                    run_name=candidate_name,
+                    nested=True,
+                ) as candidate_run:
+                    model.fit(X_train, y_train)
+                    predictions = model.predict(X_test)
+                    mae = float(mean_absolute_error(y_test, predictions))
+                    rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
+
+                    mlflow.set_tags(
+                        {
+                            "problem": "P1",
+                            "question": "p1",
+                            "model_family": model_family,
+                            "stage_of_work": "candidate",
+                        }
+                    )
+                    mlflow.log_params(
+                        {
+                            "model_family": model_family,
+                            "random_state": random_state,
+                            **model_params,
+                        }
+                    )
+                    mlflow.log_metrics({"test_mae": mae, "test_rmse": rmse})
+                    mlflow.log_input(training_dataset, context="training")
+                    log_model_with_signature(model, X_test.head(5))
+
+                    candidate = {
+                        "model": model_family,
+                        "params": model_params,
+                        "mae": mae,
+                        "rmse": rmse,
+                        "run_id": candidate_run.info.run_id,
+                    }
+                    candidates.append(candidate)
+                    if best_candidate is None or mae < best_candidate["mae"]:
+                        best_candidate = candidate
+
+        if best_candidate is None:
+            raise RuntimeError("P1 model search produced no candidate runs.")
+
+        mlflow.set_tags(
+            {
+                "best_candidate_run_id": best_candidate["run_id"],
+                "best_model_family": best_candidate["model"],
+            }
+        )
+
+    logger.success(
+        "P1 model search completed: best={} (MAE={:.4f}).",
+        best_candidate["model"],
+        best_candidate["mae"],
+    )
+    return {
+        "task": "P1_regression_search",
+        "selection_metric": "mae",
+        "best_candidate": best_candidate,
+        "candidates": candidates,
+        "parent_run_id": parent_run.info.run_id,
+    }
