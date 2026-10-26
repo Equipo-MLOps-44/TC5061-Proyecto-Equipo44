@@ -28,7 +28,7 @@ def main() -> None:
     parser.add_argument("--n-init", type=int, default=10)
     args = parser.parse_args()
 
-    allowed = {"p1": {"baseline", "rf"}, "p2": {"baseline", "rf", "rf_search"}, "p3": {"kmeans", "search"}}
+    allowed = {"p1": {"baseline", "rf", "search"}, "p2": {"baseline", "rf", "rf_search"}, "p3": {"kmeans", "search"}}
     if args.model not in allowed[args.question]:
         parser.error(f"model={args.model} is not valid for question={args.question}; choose {sorted(allowed[args.question])}.")
     if args.n_estimators < 1 or args.max_depth < 1 or args.n_clusters < 2 or args.n_init < 1:

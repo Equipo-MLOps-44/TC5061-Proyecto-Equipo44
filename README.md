@@ -206,6 +206,12 @@ Estas etiquetas son estimadas, ya que los datos disponibles no contienen medicio
 uv run --no-sync python -c "from tc5061_proyecto_equipo_44.modeling.train import train_p1; train_p1()"
 ```
 
+Para comparar Random Forest y LinearSVR en runs anidados de MLflow:
+
+```powershell
+uv run --no-sync python -m tc5061_proyecto_equipo_44.modeling.train --question p1 --model search
+```
+
 **P2 - Clasificación:**
 
 ```powershell
