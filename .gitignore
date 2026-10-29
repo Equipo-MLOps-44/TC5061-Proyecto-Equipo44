@@ -198,3 +198,8 @@ reports/p3_station_clusters.csv
 # Generated P1 experiment outputs
 reports/figures/p1_rf_*.png
 reports/p1_rf_config.json
+# DeepChecks virtual environment
+.venv-deepchecks/
+
+# Generated DeepChecks reports
+reports/deepchecks/

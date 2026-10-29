@@ -1,0 +1,10 @@
+
+# Entorno independiente para validaciones con DeepChecks
+# Python 3.10
+
+deepchecks==0.19.1
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.5.2
+setuptools==80.9.0
+pyarrow==25.0.1

@@ -57,6 +57,8 @@ MONTHLY_FILENAME_RE = re.compile(r"datos_abiertos_(\d{4})_(0[1-9]|1[0-2])(?:-[^.
 NOMENCLATURE_FILENAME_RE = re.compile(r"nomenclatura_(\d{4})_(0[1-9]|1[0-2])(?:-[^.]+)?\.csv$")
 PARQUET_BATCH_SIZE = 100_000
 DATE_COLUMNS = {"inicio_del_viaje", "fin_del_viaje"}
+START_MONTH = (2024, 10)
+END_MONTH = (2026, 9)
 
 
 class _DataLinksParser(HTMLParser):
@@ -153,17 +155,15 @@ def download_recent_data(
     page_url: str = DATA_PAGE_URL,
 ) -> list[Path]:
     """@brief Download recent MiBici trip data and its newest nomenclature CSV.
-
-    The monthly files are selected from the latest available month backwards
-    over a 24-month window. The most recent nomenclature link on the page is
-    downloaded separately from the trip data.
-
-    @param destination_dir Directory where all CSV downloads are stored.
-    @param page_url MiBici page used to discover download links.
-    @return Paths to the downloaded monthly trip files and nomenclature file.
-    @throws ValueError If the page contains no monthly or no nomenclature CSV links.
-    @throws urllib.error.URLError If the page or any file cannot be fetched.
-    @throws OSError If the destination directory or downloaded files cannot be written.
+        The monthly files are selected from the latest available month backwards
+        over a 24-month window. The most recent nomenclature link on the page is
+        downloaded separately from the trip data.
+        @param destination_dir Directory where all CSV downloads are stored.
+        @param page_url MiBici page used to discover download links.
+        @return Paths to the downloaded monthly trip files and nomenclature file.
+        @throws ValueError If the page contains no monthly or no nomenclature CSV links.
+        @throws urllib.error.URLError If the page or any file cannot be fetched.
+        @throws OSError If the destination directory or downloaded files cannot be written.
     """
     request = Request(page_url, headers=HTTP_HEADERS)
     with urlopen(request, timeout=30) as response:
@@ -176,26 +176,41 @@ def download_recent_data(
     if not parser.nomenclature_links:
         raise ValueError(f"No MiBici nomenclature CSV link found on {page_url}")
 
-    latest_month = max(parser.monthly_links)
-    latest_ordinal = latest_month[0] * 12 + latest_month[1] - 1
-    first_month_ordinal = latest_ordinal - 23
-    recent_months = sorted(
-        month
-        for month in parser.monthly_links
-        if month[0] * 12 + month[1] - 1 >= first_month_ordinal
-    )
-    latest_nomenclature = max(parser.nomenclature_links)
+    start_ordinal = START_MONTH[0] * 12 + START_MONTH[1] - 1
+    end_ordinal = END_MONTH[0] * 12 + END_MONTH[1] - 1
+
+    selected_months = [
+        (ordinal // 12, ordinal % 12 + 1)
+        for ordinal in range(start_ordinal, end_ordinal + 1)
+    ]
+
+    missing_months = [
+        month for month in selected_months
+        if month not in parser.monthly_links
+    ]
+
+    if missing_months:
+        raise ValueError(
+            f"Missing MiBici monthly CSV files: {missing_months}"
+        )
+
+    if END_MONTH not in parser.nomenclature_links:
+        raise ValueError(
+            f"Missing MiBici nomenclature for {END_MONTH}"
+        )
 
     destination_dir.mkdir(parents=True, exist_ok=True)
-    urls = [parser.monthly_links[month] for month in recent_months]
-    urls.append(parser.nomenclature_links[latest_nomenclature])
+
+    urls = [parser.monthly_links[month] for month in selected_months]
+    urls.append(parser.nomenclature_links[END_MONTH])
+
     downloaded_paths = [_download_file(url, destination_dir) for url in urls]
 
     logger.success(
         "Downloaded {} monthly MiBici CSV files and nomenclature {}_{} into {}",
-        len(recent_months),
-        latest_nomenclature[0],
-        f"{latest_nomenclature[1]:02d}",
+        len(selected_months),
+        END_MONTH[0],
+        f"{END_MONTH[1]:02d}",
         destination_dir,
     )
     return downloaded_paths
