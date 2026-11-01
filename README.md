@@ -1,3 +1,4 @@
+
 # TC5061 - Proyecto MiBici | Equipo 44
 
 Proyecto integrador de la materia de MLOps (TC5061), desarrollado a partir de los datos abiertos del sistema de bicicletas públicas MiBici, en Guadalajara, México.
@@ -121,7 +122,7 @@ cd TC5061-Proyecto-Equipo44
 **Crear y activar el entorno virtual principal (PowerShell):**
 
 ```powershell
-uv venv --python 3.10
+uv venv --python 3.11
 .\.venv\Scripts\Activate.ps1
 ```
 
@@ -145,7 +146,7 @@ Los comandos se ejecutan desde la carpeta principal del repositorio.
 
 ### Ejecutar el MLproject con MLflow
 
-El archivo `MLproject` define los entry points `ingest`, `features` y `train`. `python_env.yaml` especifica Python 3.10 y las dependencias para MLflow. Los siguientes comandos usan el entorno virtual principal ya instalado y activado.
+El archivo `MLproject` define los entry points `ingest`, `features` y `train`. `python_env.yaml` especifica Python 3.11 y las dependencias para MLflow. Los siguientes comandos usan el entorno virtual principal ya instalado y activado.
 
 ```powershell
 python -m mlflow run . -e ingest --env-manager=local --experiment-name mibici-equipo44
@@ -389,23 +390,13 @@ Para ejecutar las pruebas de entrenamiento P1, P2 y P3:
 uv run --no-sync python -m pytest tests/test_training.py -v
 ```
 
-Para ejecutar únicamente las pruebas de `train_p1`:
+Para ejecutar únicamente las pruebas de una pregunta:
 
 ```powershell
 uv run --no-sync python -m pytest tests/test_training.py -k train_p1 -v
-```
-Para ejecutar únicamente las pruebas de `train_p2`:
-
-```powershell
 uv run --no-sync python -m pytest tests/test_training.py -k train_p2 -v
-```
-
-Para ejecutar únicamente las pruebas de `train_p3`:
-
-```powershell
 uv run --no-sync python -m pytest tests/test_training.py -k train_p3 -v
 ```
-
 
 Las pruebas de entrenamiento usan datos sintéticos y aíslan los artefactos en directorios temporales; no requieren descargar datos ni iniciar una ejecución real de MLflow.
 
@@ -415,9 +406,30 @@ Para comprobar específicamente que la ingesta usa los 24 meses fijos y descarta
 uv run --no-sync python -m pytest tests/test_data.py -v
 ```
 
-En la validación local se aprobaron las cuatro pruebas del archivo `tests/test_data.py`, incluida la prueba del rango temporal fijo. Las capturas del reporte de integridad, del reporte de drift y de la terminal con PyTest pueden adjuntarse como evidencia al Pull Request o a la entrega.
+En la verificación local con Python 3.11.17 se aprobaron **29 pruebas** (con dos advertencias de MLflow). Las capturas de PyTest, DeepChecks y la auditoría de seguridad pueden adjuntarse como evidencia al Pull Request o a la entrega.
 
-### 9.5. Limitaciones y reproducibilidad
+### 9.5. Auditoría básica de seguridad
+
+Para revisar vulnerabilidades conocidas en las dependencias **instaladas** en el entorno principal de Python 3.11:
+
+```powershell
+python -m pip_audit --local
+```
+
+La revisión local con `pip-audit` no encontró vulnerabilidades conocidas en los paquetes que pudo auditar. El paquete local `tc5061-proyecto-equipo-44` fue omitido porque no está publicado en PyPI y no puede evaluarse de ese modo.
+
+**Nota:** auditar directamente `requirements.txt` con `python -m pip_audit -r requirements.txt` puede fallar porque la exportación contiene hashes y la instalación editable `-e .`. Por ello, la auditoría documentada se ejecutó sobre el entorno instalado. Conviene guardar una captura del resultado.
+
+También se revisaron los archivos versionados en busca de nombres habituales de archivos con credenciales y referencias a contraseñas o tokens:
+
+```powershell
+git ls-files | Select-String -Pattern '(^|/)\.env($|\.)|\.pem$|\.key$|\.p12$|\.pfx$|id_rsa$|id_ed25519$'
+git grep -il -E "api[_-]?key|secret|password|access[_-]?token|private[_-]?key|BEGIN .*PRIVATE KEY"
+```
+
+Estas búsquedas no arrojaron coincidencias en la revisión realizada. Son comprobaciones básicas y **no garantizan** la ausencia total de secretos o vulnerabilidades.
+
+### 9.6. Limitaciones y reproducibilidad
 
 - Los chequeos de DeepChecks usan **muestras**, por lo que no descartan problemas en filas no seleccionadas.
 - La comprobación de duplicados utiliza únicamente las seis columnas disponibles en la muestra y no equivale a comprobar duplicados por `viaje_id` sobre todo el dataset.
