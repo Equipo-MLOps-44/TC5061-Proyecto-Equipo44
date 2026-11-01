@@ -15,18 +15,23 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License"
 ]
-requires-python = "~=3.10.0"
+requires-python = ">=3.11.0"
 dependencies = [
+    "filelock==4.2.1",
     "joblib>=1.6.0",
     "loguru>=0.7.3",
     "matplotlib>=3.10.9",
     "mlflow>=3.17.1",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
+    "pillow==13.0.0",
+    "pip-audit>=2.10.1",
     "pyarrow",
+    "pyasn1==0.6.5",
     "python-dotenv>=1.2.4",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
+    "tornado==6.6",
     "tqdm>=4.70.1",
     "typer>=0.27.3",
 ]

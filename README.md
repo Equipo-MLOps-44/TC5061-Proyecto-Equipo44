@@ -383,7 +383,7 @@ Para ejecutar todas las pruebas existentes del repositorio:
 uv run --no-sync python -m pytest -q
 ```
 
-Para ejecutar las pruebas de entrenamiento P1 y P2:
+Para ejecutar las pruebas de entrenamiento P1, P2 y P3:
 
 ```powershell
 uv run --no-sync python -m pytest tests/test_training.py -v
@@ -394,6 +394,18 @@ Para ejecutar únicamente las pruebas de `train_p1`:
 ```powershell
 uv run --no-sync python -m pytest tests/test_training.py -k train_p1 -v
 ```
+Para ejecutar únicamente las pruebas de `train_p2`:
+
+```powershell
+uv run --no-sync python -m pytest tests/test_training.py -k train_p2 -v
+```
+
+Para ejecutar únicamente las pruebas de `train_p3`:
+
+```powershell
+uv run --no-sync python -m pytest tests/test_training.py -k train_p3 -v
+```
+
 
 Las pruebas de entrenamiento usan datos sintéticos y aíslan los artefactos en directorios temporales; no requieren descargar datos ni iniciar una ejecución real de MLflow.
 
