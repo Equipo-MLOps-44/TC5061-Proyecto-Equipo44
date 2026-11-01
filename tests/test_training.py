@@ -6,8 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tc5061_proyecto_equipo_44.modeling import p1_trainer
-from tc5061_proyecto_equipo_44.modeling import p2_trainer
+from tc5061_proyecto_equipo_44.modeling import p1_trainer, p2_trainer, p3_trainer
 
 
 def _hourly_p1_training_data(n_rows: int = 40) -> pd.DataFrame:
@@ -184,3 +183,50 @@ def test_train_p2_rejects_unknown_model(isolated_p2):
     """Unsupported model names should raise ValueError."""
     with pytest.raises(ValueError, match="P2 model must be 'baseline' or 'rf'"):
         p2_trainer.train_p2(model_name="invalid")
+
+
+@pytest.fixture
+def isolated_p3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Generation of synthetic data and isolation of env for P3"""
+    data_eg = {
+        'Origen_Id': [2, 3, 4, 5, 6],
+        'total_departures': [43284, np.nan, 1000, 3429, 4325],
+        'morning_departures': [324, 100, np.inf, 50, 432],
+        'dpcapacity': [23, 15, 30, 32, 5],
+        'cluster': [0, 1, 0, 2, 1]
+    }
+    # Dict to DataFrame 
+    df = pd.DataFrame(data_eg)
+
+    # Reads our fake df
+    monkeypatch.setattr(p3_trainer.pd, "read_parquet", lambda _path: df.copy())
+    monkeypatch.setattr(p3_trainer, "log_mlflow_run", lambda *args, **kwargs: None)
+
+    # Temp files
+    models_dir = tmp_path / "models"
+    reports_dir = tmp_path / "reports"
+    models_dir.mkdir()
+    reports_dir.mkdir()
+
+    monkeypatch.setattr(p3_trainer, "MODELS_DIR", models_dir)
+    monkeypatch.setattr(p3_trainer, "REPORTS_DIR", reports_dir)
+
+    return df, models_dir, reports_dir
+
+def test_train_p3_mid_cleaning_removes_nans_and_infs(isolated_p3):
+    df, _, _ = isolated_p3
+
+    X, cols = p3_trainer.p3_mid_cleaning(df, n_clusters=2)
+
+    assert X.isnull().sum().sum() == 0
+    assert np.isinf(X).sum().sum() ==0
+
+def test_train_p3_is_reproducible(isolated_p3):
+    resultado_A = p3_trainer.train_p3(model_name="k_means", n_clusters=3, random_state=42)
+    resultado_B = p3_trainer.train_p3(model_name="k_means", n_clusters=3, random_state=42)
+
+    assert resultado_A == resultado_B
+
+def test_train_p3_rejects_unkwown_model(isolated_p3):
+    with pytest.raises(ValueError):
+        p3_trainer.train_p3(model_name="neural_net", n_clusters=3, random_state=42)

@@ -36,6 +36,17 @@ def train_p3(model_name: str = "k_means", n_clusters: int = 3, random_state: int
     """P3: cluster station profiles using KMeans with three clusters."""
     df = pd.read_parquet(PROFILES_PATH)
 
+    X, feature_columns= p3_mid_cleaning(df, n_clusters= n_clusters)
+
+    if model_name == "k_means":
+        return _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init)
+    elif model_name == "search":
+        return multimodel_search(X,random_state)
+    else:
+        raise ValueError("Invalid_model")
+        
+def p3_mid_cleaning(df: pd.DataFrame, n_clusters: int) -> tuple[pd.DataFrame, list]:
+    """Additional cleaning for the P3 data"""
     excluded_columns = {"Origen_Id", "id"}
     feature_columns = [
         column
@@ -57,12 +68,8 @@ def train_p3(model_name: str = "k_means", n_clusters: int = 3, random_state: int
     if len(X.drop_duplicates()) < n_clusters:
         raise ValueError("P3 has fewer distinct profiles than clusters.")
 
-    if model_name == "k_means":
-        return _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init)
-    elif model_name == "search":
-        return multimodel_search(X,random_state)
-        
-    
+    return X, feature_columns
+       
 
 
 def _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init):
