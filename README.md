@@ -436,7 +436,93 @@ Estas búsquedas no arrojaron coincidencias en la revisión realizada. Son compr
 - La fecha de corte debe verificarse contra el código de entrenamiento vigente si el equipo modifica la partición temporal.
 - Los reportes se generan localmente y la carpeta `reports/deepchecks/` está excluida de Git; los scripts y las dependencias sí deben versionarse.
 
-## 10. Integrantes del equipo
+## 10. Despliegue de la API con Podman
+
+Se desarrolló una API REST con FastAPI para consultar el modelo P1 de MiBici mediante peticiones HTTP.
+
+### Modelo utilizado
+
+- Nombre en MLflow Model Registry: `mibici-p1-rf`
+- Versión: `1`
+- Algoritmo: RandomForestRegressor
+- Objetivo: predecir el número de viajes que iniciarán en una estación durante una hora.
+
+El modelo se recuperó desde el Model Registry de MLflow y se guardó en `models/serving/`.
+
+Se eligió empaquetar el modelo dentro de la imagen para realizar inferencia en tiempo real sin depender de un servidor MLflow durante las predicciones.
+
+### Archivos principales
+
+- `api/main.py`: código de FastAPI y validación de entradas con Pydantic.
+- `api/requirements-api.txt`: dependencias del servicio.
+- `Containerfile`: instrucciones de construcción de la imagen.
+- `.containerignore`: exclusión de archivos innecesarios.
+- `models/serving/`: modelo registrado y sus metadatos.
+
+### Construir la imagen
+
+Desde la raíz del repositorio:
+
+```powershell
+podman build -t mibici-api -f Containerfile .
+```
+
+### Ejecutar el contenedor
+
+```powershell
+podman run --rm --name mibici-api-test -p 8001:8000 mibici-api
+```
+
+La API estará disponible en:
+
+http://127.0.0.1:8001/docs
+
+### Endpoints
+
+- `GET /health`: verifica el funcionamiento del servicio.
+- `POST /predict`: recibe las ocho variables del modelo y devuelve una predicción.
+
+### Ejemplo de petición a POST /predict
+
+```json
+{
+  "departures_lag_1h": 2.0,
+  "departures_lag_24h": 3.0,
+  "departures_lag_168h": 4.0,
+  "departures_rolling_mean_24h": 3.0,
+  "hour_of_day": 14,
+  "day_of_week": 0,
+  "month": 8,
+  "is_weekend": 0
+}
+```
+
+### Respuesta obtenida
+
+```json
+{
+  "predicted_departures": 4.268983060280685
+}
+```
+
+La prueba realizada desde Podman respondió con código HTTP 200.
+
+Los datos de entrada se validan con Pydantic. Las peticiones que no cumplen las restricciones establecidas reciben una respuesta de error HTTP 422.
+
+### Evidencia
+
+La API se ejecutó dentro de un contenedor Podman y respondió
+correctamente a una petición POST /predict con código HTTP 200.
+
+![Predicción de MiBici ejecutada en Podman](docs/evidence/podman_predict.png)
+
+### Estrategia de despliegue
+
+Se eligió inferencia en tiempo real mediante una API REST. Este enfoque permite que otras aplicaciones envíen las características de una estación y obtengan una predicción cuando la necesiten.
+
+La imagen contiene el modelo previamente registrado en MLflow, sus dependencias y el código de FastAPI, para facilitar su ejecución en otras computadoras compatibles con Podman o Docker.
+
+## 11. Integrantes del equipo
 
 | Integrante | Matrícula | Responsabilidad principal |
 |---|---|---|
