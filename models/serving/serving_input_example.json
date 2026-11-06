@@ -1,0 +1,26 @@
+{
+  "dataframe_split": {
+    "columns": [
+      "departures_lag_1h",
+      "departures_lag_24h",
+      "departures_lag_168h",
+      "departures_rolling_mean_24h",
+      "hour_of_day",
+      "day_of_week",
+      "month",
+      "is_weekend"
+    ],
+    "data": [
+      [
+        2.0,
+        3.0,
+        4.0,
+        3.0,
+        14,
+        0,
+        11,
+        0
+      ]
+    ]
+  }
+}
