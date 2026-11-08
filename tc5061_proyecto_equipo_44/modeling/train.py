@@ -19,16 +19,17 @@ def main() -> None:
     # Lectura del cli
     parser = argparse.ArgumentParser(description="Train a selected MiBici model.")
     parser.add_argument("--question", choices=["p1", "p2", "p3"], default="p1")
-    parser.add_argument("--model",choices=["baseline", "rf", "rf_search", "kmeans", "search"],default="baseline",)
+    parser.add_argument("--model",choices=["baseline", "rf", "rf_search", "k_means", "search"],default="baseline",)
     parser.add_argument("--n-estimators", type=int, default=300)
     parser.add_argument("--max-depth", type=int, default=15)
     parser.add_argument("--class-weight", type=str, default="balanced")
     parser.add_argument("--n-clusters", type=int, default=3)
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--n-init", type=int, default=10)
+    parser.add_argument("--init", type=str, default="k-means++", choices=["k-means++", "random"])
     args = parser.parse_args()
 
-    allowed = {"p1": {"baseline", "rf", "search"}, "p2": {"baseline", "rf", "rf_search"}, "p3": {"kmeans", "search"}}
+    allowed = {"p1": {"baseline", "rf", "search"}, "p2": {"baseline", "rf", "rf_search"}, "p3": {"k_means", "search"}}
     if args.model not in allowed[args.question]:
         parser.error(f"model={args.model} is not valid for question={args.question}; choose {sorted(allowed[args.question])}.")
     if args.n_estimators < 1 or args.max_depth < 1 or args.n_clusters < 2 or args.n_init < 1:
@@ -47,7 +48,7 @@ def main() -> None:
         else:
             result = train_p2(model_name=args.model,n_estimators=args.n_estimators,max_depth=args.max_depth,class_weight=args.class_weight,random_state=args.random_state,)
     else:
-        result = train_p3(args.model, args.n_clusters, args.random_state, args.n_init)
+        result = train_p3(args.model, args.n_clusters, args.random_state, args.n_init, args.init)
 
     logger.info("Training completed: question={}, model={}", args.question, args.model)
     logger.info("Result summary: {}", result)

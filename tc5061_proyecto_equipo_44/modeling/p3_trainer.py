@@ -32,14 +32,14 @@ HOURLY_PATH = PROCESSED_DATA_DIR / "hourly_features.parquet"
 PROFILES_PATH = PROCESSED_DATA_DIR / "station_profiles.parquet"
 
 
-def train_p3(model_name: str = "k_means", n_clusters: int = 3, random_state: int = 0, n_init: int = 10) -> dict:
+def train_p3(model_name: str = "k_means", n_clusters: int = 3, random_state: int = 0, n_init: int = 10, init:str = "k-means++") -> dict:
     """P3: cluster station profiles using KMeans with three clusters."""
     df = pd.read_parquet(PROFILES_PATH)
 
     X, feature_columns= p3_mid_cleaning(df, n_clusters= n_clusters)
 
     if model_name == "k_means":
-        return _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init)
+        return _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init, init)
     elif model_name == "search":
         return multimodel_search(X,random_state)
     else:
@@ -59,6 +59,8 @@ def p3_mid_cleaning(df: pd.DataFrame, n_clusters: int) -> tuple[pd.DataFrame, li
             "P3 has no numeric station-profile features."
         )
 
+    print(feature_columns, type(feature_columns))
+
     X = df[feature_columns].replace([np.inf, -np.inf], np.nan)
     X = X.fillna(X.median()).fillna(0)
 
@@ -72,10 +74,10 @@ def p3_mid_cleaning(df: pd.DataFrame, n_clusters: int) -> tuple[pd.DataFrame, li
        
 
 
-def _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init):
+def _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init, init):
     model = make_pipeline(
         StandardScaler(),
-        KMeans(n_clusters=n_clusters,random_state=random_state,n_init=n_init,),
+        KMeans(n_clusters=n_clusters,random_state=random_state,n_init=n_init, init=init),
     )
 
     labels = model.fit_predict(X)
@@ -131,6 +133,7 @@ def _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init):
         "n_clusters": n_clusters,
         "random_state": random_state,
         "n_init": n_init,
+        "init": init,
         "features": feature_columns,
         "stations": int(len(X)),
         "dataset_file": PROFILES_PATH.name,
@@ -189,6 +192,7 @@ def _run_k_means(df, X, feature_columns, n_clusters, random_state, n_init):
             "n_clusters": n_clusters,
             "random_state": random_state,
             "n_init": n_init,
+            "init": init,
             "features": feature_columns,
             "stations": len(X),
             **dataset_metadata(PROFILES_PATH),
