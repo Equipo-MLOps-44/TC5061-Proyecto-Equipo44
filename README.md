@@ -469,6 +469,11 @@ El modelo se cargó directamente mediante la librería `joblib` desde el sistema
 - `models/serving/`: modelo registrado y sus metadatos.
 
 ### Construir la imagen
+Desde la raíz del repositorio:
+
+```powershell
+podman build -t mibici-api -f Containerfile .
+```
 
 ### Ejecutar el contenedor
 
