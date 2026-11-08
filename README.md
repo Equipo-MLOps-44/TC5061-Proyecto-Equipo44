@@ -154,10 +154,10 @@ python -m mlflow run . -e features --env-manager=local --experiment-name mibici-
 python -m mlflow run . -e train --env-manager=local --experiment-name mibici-equipo44 -P question=p1 -P model=baseline
 ```
 
-Para ejecutar P3 se requiere `model=kmeans`:
+Para ejecutar P3 se requiere `model=k_means`:
 
 ```powershell
-python -m mlflow run . -e train --env-manager=local --experiment-name mibici-equipo44 -P question=p3 -P model=kmeans
+python -m mlflow run . -e train --env-manager=local --experiment-name mibici-equipo44 -P question=p3 -P model=k_means
 ```
 
 `--env-manager=local` ejecuta los entry points con el entorno virtual activo. `--experiment-name mibici-equipo44` asigna la ejecución de MLflow Projects al experimento del equipo.
@@ -438,9 +438,9 @@ Estas búsquedas no arrojaron coincidencias en la revisión realizada. Son compr
 
 ## 10. Despliegue de la API con Podman
 
-Se desarrolló una API REST con FastAPI para consultar el modelo P1 de MiBici mediante peticiones HTTP.
+Se desarrolló una API REST con FastAPI para consultar los modelos de MiBici mediante peticiones HTTP.
 
-### Modelo utilizado
+### Modelo para pregunta 1 utilizado
 
 - Nombre en MLflow Model Registry: `mibici-p1-rf`
 - Versión: `1`
@@ -451,6 +451,15 @@ El modelo se recuperó desde el Model Registry de MLflow y se guardó en `models
 
 Se eligió empaquetar el modelo dentro de la imagen para realizar inferencia en tiempo real sin depender de un servidor MLflow durante las predicciones.
 
+### Modelo para pregunta 3 utilizado
+
+- Ubicación: `models/serving/p3_kmeans_3_clusters.joblib`
+- Algoritmo: `KMeans`
+- Configuración: 3 clústeres, inicialización `random`.
+- Objetivo: agrupar las estaciones del sistema MiBici basándose en patrones de uso, capacidad y geografía.
+
+El modelo se cargó directamente mediante la librería `joblib` desde el sistema de archivos. Se eligió empaquetar el modelo dentro de la imagen para realizar inferencia en tiempo real sin depender de servicios externos durante las predicciones.
+
 ### Archivos principales
 
 - `api/main.py`: código de FastAPI y validación de entradas con Pydantic.
@@ -460,12 +469,6 @@ Se eligió empaquetar el modelo dentro de la imagen para realizar inferencia en 
 - `models/serving/`: modelo registrado y sus metadatos.
 
 ### Construir la imagen
-
-Desde la raíz del repositorio:
-
-```powershell
-podman build -t mibici-api -f Containerfile .
-```
 
 ### Ejecutar el contenedor
 
@@ -481,6 +484,7 @@ http://127.0.0.1:8001/docs
 
 - `GET /health`: verifica el funcionamiento del servicio.
 - `POST /predict`: recibe las ocho variables del modelo y devuelve una predicción.
+- `POST /predict/p3`: recibe las características de una estación y devuelve el clúster al que pertenece
 
 ### Ejemplo de petición a POST /predict
 
@@ -502,6 +506,30 @@ http://127.0.0.1:8001/docs
 ```json
 {
   "predicted_departures": 4.268983060280685
+}
+```
+
+### Ejemplo de petición a POST /predict/p3
+```json
+{
+  "total_departures": 23,
+  "total_arrivals": 10,
+  "morning_departures": 20,
+  "weekend_departures": 3,
+  "dpcapacity": 0,
+  "avg_daily_departures": 0,
+  "morning_share": 0.5,
+  "weekend_share": 0.2,
+  "latitude": 0,
+  "longitude": 0
+}
+```
+
+### Respuesta obtenida
+
+```json
+{
+  "predicted_cluster": 2
 }
 ```
 
