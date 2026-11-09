@@ -134,7 +134,7 @@ def test_download_recent_data_selects_fixed_24_months_and_nomenclature(
             year += 1
             month = 1
 
-    # Simular dos versiones disponibles de nomenclatura.
+    # Simular nomenclaturas disponibles a ambos lados del cambio de año.
     links.append(
         '<a href="/site/assets/files/1118/'
         'nomenclatura_2026_09.csv">Nomenclatura</a>'
@@ -143,6 +143,11 @@ def test_download_recent_data_selects_fixed_24_months_and_nomenclature(
     links.append(
         '<a href="/site/assets/files/1119/'
         'nomenclatura_2026_10.csv">Nomenclatura</a>'
+    )
+
+    links.append(
+        '<a href="/site/assets/files/1120/'
+        'nomenclatura_2027_01.csv">Nomenclatura</a>'
     )
 
     page_content = "".join(links).encode("utf-8")
@@ -189,9 +194,16 @@ def test_download_recent_data_selects_fixed_24_months_and_nomenclature(
     assert "datos_abiertos_2026_10.csv" not in monthly_names
     assert not (tmp_path / "datos_abiertos_2026_10.csv").exists()
 
-    # Comprobar que se usa la nomenclatura fija.
-    assert (tmp_path / "nomenclatura_2026_09.csv").is_file()
+    # Comprobar que el orden cronológico también funciona al cambiar de año.
+    assert (tmp_path / "nomenclatura_2027_01.csv").is_file()
+    assert not (tmp_path / "nomenclatura_2026_09.csv").exists()
     assert not (tmp_path / "nomenclatura_2026_10.csv").exists()
 
-    # 1 solicitud de página + 24 meses + 1 nomenclatura.
+    # Los viajes mantienen el periodo fijo aunque exista octubre de 2026.
+    assert (
+        "https://mibici.example/site/assets/files/1120/nomenclatura_2027_01.csv"
+        in requested_urls
+    )
+
+    # 1 solicitud de página + 24 meses + 1 nomenclatura más reciente.
     assert len(requested_urls) == 26

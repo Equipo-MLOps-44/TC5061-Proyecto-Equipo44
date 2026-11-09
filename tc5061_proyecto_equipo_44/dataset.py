@@ -194,23 +194,27 @@ def download_recent_data(
             f"Missing MiBici monthly CSV files: {missing_months}"
         )
 
-    if END_MONTH not in parser.nomenclature_links:
+    available_nomenclature_months = [
+        month for month in parser.nomenclature_links if month >= END_MONTH
+    ]
+    if not available_nomenclature_months:
         raise ValueError(
-            f"Missing MiBici nomenclature for {END_MONTH}"
+            f"No MiBici nomenclature available for {END_MONTH} or newer"
         )
+    nomenclature_month = max(available_nomenclature_months)
 
     destination_dir.mkdir(parents=True, exist_ok=True)
 
     urls = [parser.monthly_links[month] for month in selected_months]
-    urls.append(parser.nomenclature_links[END_MONTH])
+    urls.append(parser.nomenclature_links[nomenclature_month])
 
     downloaded_paths = [_download_file(url, destination_dir) for url in urls]
 
     logger.success(
         "Downloaded {} monthly MiBici CSV files and nomenclature {}_{} into {}",
         len(selected_months),
-        END_MONTH[0],
-        f"{END_MONTH[1]:02d}",
+        nomenclature_month[0],
+        f"{nomenclature_month[1]:02d}",
         destination_dir,
     )
     return downloaded_paths
