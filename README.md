@@ -554,8 +554,56 @@ correctamente a una petición POST /predict con código HTTP 200.
 Se eligió inferencia en tiempo real mediante una API REST. Este enfoque permite que otras aplicaciones envíen las características de una estación y obtengan una predicción cuando la necesiten.
 
 La imagen contiene el modelo previamente registrado en MLflow, sus dependencias y el código de FastAPI, para facilitar su ejecución en otras computadoras compatibles con Podman o Docker.
+## 11. Monitoreo de data drift con Evidently
 
-## 11. Integrantes del equipo
+Se implemento el monitoreo de datos para P1 (regresion),
+P2 (clasificacion) y P3 (clustering).
+
+### Periodos analizados
+
+- Referencia: julio-septiembre de 2025.
+- Actual: julio-septiembre de 2026.
+- P1 y P2: 10,000 registros por periodo.
+- P3: 368 estaciones compartidas.
+
+Los periodos se deben validar con el equipo frente
+a los datos utilizados para entrenar los modelos.
+
+### Instalacion
+
+```powershell
+uv venv .venv-evidently --python 3.11
+uv pip install --python .\.venv-evidently\Scripts\python.exe -r .\requirements-evidently.txt
+```
+
+### Ejecucion
+
+Desde la carpeta principal del proyecto:
+
+```powershell
+.\.venv-evidently\Scripts\python.exe .\scripts\monitor_p1_evidently.py
+.\.venv-evidently\Scripts\python.exe .\scripts\monitor_p2_evidently.py
+.\.venv-evidently\Scripts\python.exe -m scripts.monitor_p3_evidently
+```
+
+### Resultados
+
+| Modelo | Variables con drift | Drift global |
+|---|---|---|
+| P1 | 0 de 8 | No detectado |
+| P2 | 1 de 11 (dpcapacity) | No detectado |
+| P3 | 1 de 10 (weekend_share) | No detectado |
+
+### Evidencia
+
+- reports/evidently/p1_drift.html
+- reports/evidently/p2_drift.html
+- reports/evidently/p3_drift.html
+
+La interpretacion y las limitaciones se encuentran
+en docs/evidently_drift_results.md.
+
+## 12. Integrantes del equipo
 
 | Integrante | Matrícula | Responsabilidad principal |
 |---|---|---|
