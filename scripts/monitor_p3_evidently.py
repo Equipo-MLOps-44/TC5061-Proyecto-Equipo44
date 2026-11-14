@@ -8,7 +8,7 @@ from evidently.presets import DataDriftPreset, DataSummaryPreset
 from tc5061_proyecto_equipo_44.features import create_station_profiles
 
 
-DATA_PATH = Path("data/processed/hourly_features.parquet")
+DATA_PATH = Path("data/processed/hourly_features_challenger.parquet")
 
 COLUMNS = [
     "Origen_Id",
@@ -73,8 +73,8 @@ def load_profiles(start, end):
 
 
 # Periodos provisionales de igual duracion (92 dias)
-reference = load_profiles("2025-07-01", "2025-10-01")
-current = load_profiles("2026-07-01", "2026-10-01")
+reference = load_profiles("2024-10-01", "2026-10-01")
+current = load_profiles("2026-10-01", "2026-11-01")
 
 # Comparar las mismas estaciones en ambos periodos
 reference_ids = set(reference["Origen_Id"])
@@ -114,7 +114,7 @@ result = report.run(
     reference_data=reference,
 )
 
-output = Path("reports/evidently/p3_drift.html")
+output = Path("reports/evidently/p3_drift_v2.html")
 output.parent.mkdir(parents=True, exist_ok=True)
 
 result.save_html(str(output))

@@ -5,7 +5,7 @@ import pandas as pd
 from evidently import Report
 from evidently.presets import DataDriftPreset, DataSummaryPreset
 
-DATA_PATH = Path("data/processed/hourly_features.parquet")
+DATA_PATH = Path("data/processed/hourly_features_challenger.parquet")
 
 FEATURES = [
     "departures_lag_1h",
@@ -42,8 +42,8 @@ def load_period(start, end):
 
 
 # Periodos propuestos
-reference = load_period("2025-07-01", "2025-10-01")
-current = load_period("2026-07-01", "2026-10-01")
+reference = load_period("2024-10-01", "2026-10-01")
+current = load_period("2026-10-01", "2026-11-01")
 
 print(f"Registros de referencia: {len(reference)}")
 print(f"Registros actuales: {len(current)}")
@@ -58,7 +58,7 @@ result = report.run(
     reference_data=reference,
 )
 
-output = Path("reports/evidently/p1_drift.html")
+output = Path("reports/evidently/p1_drift_v2.html")
 output.parent.mkdir(parents=True, exist_ok=True)
 
 result.save_html(str(output))
