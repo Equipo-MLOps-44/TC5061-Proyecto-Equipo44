@@ -23,7 +23,7 @@ from sklearn.svm import LinearSVR
 from tc5061_proyecto_equipo_44.config import (MODELS_DIR,PROCESSED_DATA_DIR,REPORTS_DIR,)
 
 from .data_utils import chronological_split, dataset_metadata
-from .mlflow_utils import log_mlflow_run, log_model_with_signature
+from .mlflow_utils import log_mlflow_run, log_model_with_signature, tag_registered_version
 
 
 RANDOM_STATE = 0
@@ -31,20 +31,76 @@ TEST_SIZE = 0.30
 HOURLY_PATH = PROCESSED_DATA_DIR / "hourly_features.parquet"
 MANIFEST_PATH = Path(__file__).resolve().parents[2] / "references" / "data_manifest.json"
 
+P1_REGISTERED_MODEL_NAME = "P1_Departures_Model"
+P1_FEATURES = [
+    "Origen_Id",
+    "departures_lag_1h",
+    "departures_lag_24h",
+    "departures_lag_168h",
+    "departures_rolling_mean_24h",
+    "hour_of_day",
+    "day_of_week",
+    "month",
+    "is_weekend",
+]
+# Inputs actually fed to the models (Origen_Id is kept only as an identifier).
+P1_MODEL_FEATURES = [f for f in P1_FEATURES if f != "Origen_Id"]
 
-def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int = 15,random_state: int = 0,) -> dict:
-    """P1: estimate hourly station departures using a baseline or random forest."""
-    p1_features = [
-        "Origen_Id",
-        "departures_lag_1h",
-        "departures_lag_24h",
-        "departures_lag_168h",
-        "departures_rolling_mean_24h",
-        "hour_of_day",
-        "day_of_week",
-        "month",
-        "is_weekend",
-    ]
+
+def split_p1(
+    df: pd.DataFrame,
+    train_start: str | None = None,
+    train_end: str | None = None,
+    eval_start: str | None = None,
+    eval_end: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp, str]:
+    """Split P1 data. Without `train_end`: chronological 70/30 (original behaviour).
+
+    With `train_end`, use explicit windows: train = [train_start, train_end) and
+    test = [eval_start or train_end, eval_end). This is what continuous training
+    uses to retrain on newer data while keeping a clean hold-out.
+    """
+    if train_end is None:
+        train, test, split_time = chronological_split(df)
+        return train, test, split_time, "chronological"
+
+    eval_start = eval_start or train_end
+    train_mask = df["hour"] < pd.Timestamp(train_end)
+    if train_start:
+        train_mask &= df["hour"] >= pd.Timestamp(train_start)
+    test_mask = df["hour"] >= pd.Timestamp(eval_start)
+    if eval_end:
+        test_mask &= df["hour"] < pd.Timestamp(eval_end)
+    train, test = df[train_mask].copy(), df[test_mask].copy()
+    if train.empty or test.empty:
+        raise ValueError(
+            f"Windowed split produced an empty partition (train={len(train)}, test={len(test)}). "
+            f"Data available: {df['hour'].min()} to {df['hour'].max()}. "
+            "If the evaluation period is newer, re-run ingestion and features first."
+        )
+    return train, test, pd.Timestamp(eval_start), "windowed"
+
+
+def train_p1(
+    model_name: str = "baseline",
+    n_estimators: int = 300,
+    max_depth: int = 15,
+    random_state: int = 0,
+    train_start: str | None = None,
+    train_end: str | None = None,
+    eval_start: str | None = None,
+    eval_end: str | None = None,
+    register: bool = False,
+) -> dict:
+    """P1: estimate hourly station departures using a baseline or random forest.
+
+    Continuous training: pass `train_end` (and optionally the other window
+    bounds) to retrain on a different period, and `register=True` to store the
+    random forest as a new version of `P1_Departures_Model` in the Model Registry.
+    """
+    p1_features = P1_FEATURES
+    if register and model_name != "rf":
+        raise ValueError("Only model_name='rf' can be registered in the Model Registry.")
 
     df = pd.read_parquet(HOURLY_PATH)
 
@@ -62,7 +118,9 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
     df = df.dropna(subset=["Origen_Id", "hour", "departures"])
     df = df.sort_values(["hour", "Origen_Id"]).reset_index(drop=True)
 
-    train, test, split_time = chronological_split(df)
+    train, test, split_time, split_mode = split_p1(
+        df, train_start, train_end, eval_start, eval_end
+    )
 
     # Register the exact training partition as an MLflow input dataset.
     training_dataset = mlflow.data.from_pandas(train,source=str(HOURLY_PATH),name="p1_training_dataset",)
@@ -157,7 +215,7 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
         "task": "P1_regression",
         "target": "departures",
         "model": model_name,
-        "split": "chronological",
+        "split": split_mode,
         "split_time": str(split_time),
         "test_size": TEST_SIZE,
         "train_rows": len(train),
@@ -180,8 +238,9 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
                 "max_depth": max_depth if model_name == "rf" else None,
                 "random_state": random_state,
                 "test_size": TEST_SIZE,
-                "split": "chronological",
+                "split": split_mode,
                 "split_time": str(split_time),
+                "train_end": train_end,
                 "features": numeric_features if model_name == "rf" else ["constant_zero"],
             },
             indent=2,
@@ -190,7 +249,7 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
         encoding="utf-8",
     )
 
-    log_mlflow_run(
+    run_id = log_mlflow_run(
         run_name=f"P1_{model_name}",
         params={
             "task": "P1_regression",
@@ -200,8 +259,10 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
             "max_depth": max_depth,
             "random_state": random_state,
             "test_size": TEST_SIZE,
-            "split": "chronological",
+            "split": split_mode,
             "split_time": str(split_time),
+            "train_window_start": str(train["hour"].min()),
+            "train_window_end": train_end or str(split_time),
             "train_rows": len(train),
             "test_rows": len(test),
             "planned_features": p1_features,
@@ -221,7 +282,21 @@ def train_p1(model_name: str = "baseline",n_estimators: int = 300,max_depth: int
         input_example=model_input_example,
         artifact_dirs={"plots": [actual_vs_predicted_path, residuals_path],"config": [config_path],"data": [MANIFEST_PATH],},
         input_dataset=training_dataset,
+        registered_model_name=P1_REGISTERED_MODEL_NAME if register else None,
     )
+
+    if register:
+        results["registered_model_version"] = tag_registered_version(
+            P1_REGISTERED_MODEL_NAME,
+            run_id,
+            {
+                "data_train_start": str(train["hour"].min()),
+                "data_train_end": train_end or str(split_time),
+                "train_rows": len(train),
+                "n_estimators": n_estimators,
+                "max_depth": max_depth,
+            },
+        )
 
     logger.success("P1 {} completed.", model_name)
     return results

@@ -563,7 +563,11 @@ def read_dataset(path: Path) -> pd.DataFrame:
         return pd.read_parquet(path)
 
     if path.suffix.lower() == ".csv":
-        return pd.read_csv(path, encoding="utf-8-sig")
+        try:
+            return pd.read_csv(path, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            # Some source CSVs (e.g. station nomenclature) are Latin-1/cp1252
+            return pd.read_csv(path, encoding="latin-1")
 
     raise ValueError(f"Unsupported file format: {path.suffix}")
 

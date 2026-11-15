@@ -1,6 +1,6 @@
 {
     "dataset": "MiBici",
-    "version": "e01da28b62056c69",
+    "version": "23b1a49c8e897b94",
     "source_files": [
         {
             "filename": "datos_abiertos_2024_10.csv",
@@ -123,14 +123,19 @@
             "sha256": "00b5cf64cc31a502d01044d905f6e033f9bc1db962e771119742fd25c6cb58b3"
         },
         {
-            "filename": "nomenclatura_2026_09.csv",
-            "records": 484,
-            "sha256": "206e45fe633922b634d858142fa21e6fd9f4c421b6435c02980ef290cc2df90d"
+            "filename": "datos_abiertos_2026_10.csv",
+            "records": 635532,
+            "sha256": "0cdfb05299e6db658ac9cc7723494a9704b0749e3671c29c8566826ea889b900"
+        },
+        {
+            "filename": "nomenclatura_2026_10.csv",
+            "records": 470,
+            "sha256": "2da38dd60dcc74ccb95eb8ed1572e107cf5af44dfa6c5a4fbfa4e30f94ef7f3e"
         }
     ],
     "processed_dataset": {
         "filename": "dataset.parquet",
-        "records": 9043925,
-        "sha256": "ffbbe5d394377d9bcc1e387a7bc45fb757f1a5ca4c81a429966c7936acb6b0b0"
+        "records": 9679457,
+        "sha256": "b53bae147489a722c414114e5fa5b477d501302203c58d8e57a991485dbcb7d4"
     }
 }

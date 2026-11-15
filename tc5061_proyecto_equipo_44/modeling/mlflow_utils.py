@@ -46,8 +46,12 @@ def _safe_value(value: Any) -> Any:
     return value
 
 
-def log_model_with_signature(model: Any,input_example: pd.DataFrame | np.ndarray,artifact_path: str = "model",) -> None:
-    """Log a fitted scikit-learn model with inferred signature and input example."""
+def log_model_with_signature(model: Any,input_example: pd.DataFrame | np.ndarray,artifact_path: str = "model",registered_model_name: str | None = None,) -> None:
+    """Log a fitted scikit-learn model with inferred signature and input example.
+
+    If `registered_model_name` is given, the model is also registered in the
+    MLflow Model Registry (creating a new version of that model).
+    """
     import mlflow.sklearn
     from mlflow.models import infer_signature
 
@@ -67,7 +71,34 @@ def log_model_with_signature(model: Any,input_example: pd.DataFrame | np.ndarray
         signature=signature,
         input_example=example,
         skops_trusted_types=["sklearn.tree._tree.Tree"],
+        registered_model_name=registered_model_name,
     )
+
+
+def tag_registered_version(
+    model_name: str,
+    run_id: str,
+    tags: dict[str, Any],
+) -> str:
+    """Tag the registry version created by `run_id` and set its alias.
+
+    The first version of a model becomes `champion`; later ones `challenger`
+    (promotion is decided afterwards by the A/B test).
+    """
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+    versions = client.search_model_versions(f"name='{model_name}'")
+    mine = [v for v in versions if v.run_id == run_id]
+    if not mine:
+        raise RuntimeError(f"No registered version of '{model_name}' found for run {run_id}.")
+    version = mine[0].version
+    for key, value in tags.items():
+        client.set_model_version_tag(model_name, version, key, str(value))
+    alias = "champion" if len(versions) == 1 else "challenger"
+    client.set_registered_model_alias(model_name, alias, version)
+    logger.success("Registered {} v{} (alias: {})", model_name, version, alias)
+    return str(version)
 
 
 def log_mlflow_run(
@@ -81,11 +112,12 @@ def log_mlflow_run(
     input_example: pd.DataFrame | np.ndarray | None = None,
     artifact_dirs: dict[str, list[str | FilePath]] | None = None,
     input_dataset: Any | None = None,
-) -> None:
+    registered_model_name: str | None = None,
+) -> str:
     """Log parameters, metrics, tags, files, and optionally a model to MLflow.
 
     `artifact_paths` remains supported for existing callers; those files are logged
-    under `artifacts/`. Use `artifact_dirs` to place files under named folders,
+    under `artifacts/`. Returns the MLflow run id. Use `artifact_dirs` to place files under named folders,
     e.g. {"plots": [plot_path], "data": [manifest_path], "config": [config_path]}.
     """
     commit = get_git_commit()
@@ -142,9 +174,15 @@ def log_mlflow_run(
                     run_name,
                 )
             else:
-                log_model_with_signature(model, input_example, artifact_path="model")
+                log_model_with_signature(
+                    model,
+                    input_example,
+                    artifact_path="model",
+                    registered_model_name=registered_model_name,
+                )
 
         logger.info("MLflow results logged for: {}", run_name)
+        return run_context.info.run_id
 
 
 def _log_existing_file(path: str | FilePath, artifact_path: str) -> None:

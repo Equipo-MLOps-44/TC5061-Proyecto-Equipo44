@@ -65,6 +65,21 @@ entry_points:
       init:
         type: str
         default: "k-means++"
+      train_end:
+        type: str
+        default: "none"
+      train_start:
+        type: str
+        default: "none"
+      eval_start:
+        type: str
+        default: "none"
+      eval_end:
+        type: str
+        default: "none"
+      register:
+        type: str
+        default: "false"
     command: >-
       python -m tc5061_proyecto_equipo_44.modeling.train
       --question {question}
@@ -76,3 +91,8 @@ entry_points:
       --random-state {random_state}
       --n-init {n_init}
       --init {init}
+      --train-start {train_start}
+      --train-end {train_end}
+      --eval-start {eval_start}
+      --eval-end {eval_end}
+      --register {register}
