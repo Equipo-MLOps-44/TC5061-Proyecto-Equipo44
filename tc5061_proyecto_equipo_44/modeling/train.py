@@ -27,6 +27,16 @@ def main() -> None:
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--n-init", type=int, default=10)
     parser.add_argument("--init", type=str, default="k-means++", choices=["k-means++", "random"])
+    # Continuous training (P1): explicit data windows and Model Registry registration.
+    # "none" (the MLproject default) is treated as "not provided".
+    opt_date = lambda v: None if v is None or v.lower() == "none" else v  # noqa: E731
+    parser.add_argument("--train-start", type=opt_date, default=None, help="P1: inicio de la ventana de entrenamiento (inclusive).")
+    parser.add_argument("--train-end", type=opt_date, default=None, help="P1: fin de entrenamiento (exclusivo). Activa el split por ventanas.")
+    parser.add_argument("--eval-start", type=opt_date, default=None, help="P1: inicio del hold-out (por defecto, --train-end).")
+    parser.add_argument("--eval-end", type=opt_date, default=None, help="P1: fin del hold-out (exclusivo).")
+    parser.add_argument("--register", nargs="?", const=True, default=False,
+                        type=lambda v: str(v).lower() in ("1", "true", "yes"),
+                        help="P1 rf: registrar como nueva version en el Model Registry.")
     args = parser.parse_args()
 
     allowed = {"p1": {"baseline", "rf", "search"}, "p2": {"baseline", "rf", "rf_search"}, "p3": {"k_means", "search"}}
@@ -41,7 +51,11 @@ def main() -> None:
         raise FileNotFoundError(f"Required feature dataset not found: {required_path}")
 
     if args.question == "p1":
-        result = train_p1(args.model, args.n_estimators, args.max_depth, args.random_state)
+        result = train_p1(
+            args.model, args.n_estimators, args.max_depth, args.random_state,
+            train_start=args.train_start, train_end=args.train_end,
+            eval_start=args.eval_start, eval_end=args.eval_end, register=args.register,
+        )
     elif args.question == "p2":
         if args.model == "rf_search":
             result = search_p2(n_estimators=args.n_estimators,random_state=args.random_state,)

@@ -90,6 +90,30 @@ def test_train_p1_rejects_unknown_model(isolated_p1):
         p1_trainer.train_p1(model_name="invalid")
 
 
+def test_split_p1_windowed_has_no_overlap():
+    """Windowed split (continuous training) keeps train and hold-out disjoint."""
+    df = _hourly_p1_training_data(40)
+    train, test, split_time, mode = p1_trainer.split_p1(
+        df, train_end="2025-01-01 20:00", eval_start="2025-01-01 20:00"
+    )
+    assert mode == "windowed"
+    assert train["hour"].max() < split_time <= test["hour"].min()
+    assert len(train) == 20 and len(test) == 20
+
+
+def test_split_p1_windowed_rejects_empty_holdout():
+    """A hold-out beyond the available data must fail with a clear message."""
+    df = _hourly_p1_training_data(40)
+    with pytest.raises(ValueError, match="empty partition"):
+        p1_trainer.split_p1(df, train_end="2025-01-01 10:00", eval_start="2026-01-01")
+
+
+def test_train_p1_register_requires_rf(isolated_p1):
+    """Only the random forest can be registered in the Model Registry."""
+    with pytest.raises(ValueError, match="Only model_name='rf'"):
+        p1_trainer.train_p1(model_name="baseline", register=True)
+
+
 def _hourly_training_data(n_rows: int = 40,include_targets: bool = True,) -> pd.DataFrame:
     """Create deterministic, time-ordered data for P2 tests."""
     hours = pd.date_range("2025-01-01", periods=n_rows, freq="h")

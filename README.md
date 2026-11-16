@@ -74,7 +74,8 @@ TC5061-Proyecto-Equipo44/
 ├── docs/
 ├── scripts/
 │   ├── validate_mibici.py
-│   └── validate_mibici_drift.py
+│   ├── validate_mibici_drift.py
+│   └── ab_test_p1.py                # A/B testing de versiones del modelo P1
 ├── tests/
 │   └── test_data.py
 ├── tc5061_proyecto_equipo_44/
@@ -84,6 +85,8 @@ TC5061-Proyecto-Equipo44/
 │   ├── features.py
 │   └── modeling/
 │       ├── train.py
+│       ├── p1_trainer.py            # Entrenamiento P1 (incluye ventanas y registro)
+│       ├── mlflow_utils.py
 │       └── predict.py
 ├── MLproject
 ├── python_env.yaml
@@ -210,6 +213,30 @@ uv run --no-sync mlflow run . -e train -P question=p1 -P model=rf -P n_estimator
 uv run --no-sync mlflow run . -e train -P question=p1 -P model=rf -P n_estimators=20 -P max_depth=8 --env-manager local --experiment-name mibici-equipo44 --run-name P1_RF_20_depth8
 uv run --no-sync mlflow run . -e train -P question=p1 -P model=rf -P n_estimators=40 -P max_depth=10 --env-manager local --experiment-name mibici-equipo44 --run-name P1_RF_40_depth10
 ```
+
+**P1 — Reentrenamiento con ventanas de datos y registro en el Model Registry (Continuous Training):**
+
+Por defecto, P1 usa una división cronológica 70/30 (comportamiento original). Para reentrenar con otro periodo, por ejemplo al incorporar datos recientes, se definen ventanas explícitas de entrenamiento y evaluación y se registra el modelo como una nueva versión de `P1_Departures_Model`:
+
+```powershell
+uv run --no-sync mlflow run . -e train -P question=p1 -P model=rf -P n_estimators=300 -P max_depth=15 -P train_start=2024-10-01 -P train_end=2026-10-16 -P eval_start=2026-10-16 -P register=true --env-manager local --experiment-name mibici-equipo44 --run-name P1_RF_v2
+```
+
+Equivalente sin MLflow Projects:
+
+```powershell
+uv run --no-sync python -m tc5061_proyecto_equipo_44.modeling.train --question p1 --model rf --n-estimators 300 --max-depth 15 --train-start 2024-10-01 --train-end 2026-10-16 --eval-start 2026-10-16 --register
+```
+
+| Parámetro (`-P` / flag) | Descripción | Valor por defecto |
+|---|---|---|
+| `train_start` / `--train-start` | Inicio de la ventana de entrenamiento (inclusive). | `none` (desde el primer dato) |
+| `train_end` / `--train-end` | Fin del entrenamiento (exclusivo). Si se indica, se activa la división por ventanas en lugar de la 70/30. | `none` |
+| `eval_start` / `--eval-start` | Inicio del conjunto de evaluación (hold-out). | `none` (igual a `train_end`) |
+| `eval_end` / `--eval-end` | Fin del conjunto de evaluación (exclusivo). | `none` (hasta el último dato) |
+| `register` / `--register` | Registra el modelo como nueva versión de `P1_Departures_Model`. Solo aplica a `model=rf`. | `false` |
+
+Con `register=true`, la versión queda etiquetada con `data_train_start`, `data_train_end`, `train_rows`, `n_estimators` y `max_depth`. La primera versión registrada recibe el alias `champion` y las siguientes el alias `challenger`. Si el periodo de evaluación no existe en `hourly_features.parquet`, el entrenamiento se detiene con un mensaje indicando que hay que volver a ejecutar la ingesta y el Feature Engineering.
 
 **P2 — Clasificación, baseline:**
 
@@ -604,7 +631,98 @@ Desde la carpeta principal del proyecto:
 <!-- La interpretacion y las limitaciones se encuentran
 en docs/evidently_drift_results.md. -->
 
-## 12. Integrantes del equipo
+## 12. A/B testing de versiones del modelo P1
+
+Para decidir si conviene reentrenar el modelo con datos recientes (Continuous Training), se comparan dos versiones de `P1_Departures_Model` sobre el mismo conjunto de evaluación, que ninguna de las dos utilizó para entrenar.
+
+### Versiones y periodos
+
+| Versión | Datos de entrenamiento | Alias inicial |
+|---|---|---|
+| v1 | Octubre 2024 – septiembre 2026 (24 meses) | `champion` |
+| v2 | Los mismos 24 meses más el 1–15 de octubre de 2026 | `challenger` |
+
+- **Conjunto de evaluación (hold-out):** del 16 de octubre de 2026 en adelante, común para ambas versiones.
+- Los hiperparámetros de v2 deben ser los mismos que los de v1, para que la diferencia se deba a los datos y no al modelo.
+
+### Preparación
+
+1. Tener ingestados y procesados los datos de octubre de 2026 (secciones 5.1 y 5.2). Se comprueba con:
+
+```powershell
+uv run --no-sync python -c "import pandas as pd; d=pd.read_parquet('data/processed/hourly_features.parquet',columns=['hour']); print(d.hour.max())"
+```
+
+2. Levantar el servidor de MLflow (sección 6) y registrar la versión v1 una sola vez, indicando el Run ID del run de Random Forest de 24 meses:
+
+```powershell
+uv run --no-sync python -c "import mlflow; from mlflow.tracking import MlflowClient as C; mlflow.set_tracking_uri('http://127.0.0.1:5000'); mv=mlflow.register_model('runs:/<RUN_ID>/model','P1_Departures_Model'); c=C(); c.set_model_version_tag('P1_Departures_Model',mv.version,'data_train_start','2024-10-01'); c.set_model_version_tag('P1_Departures_Model',mv.version,'data_train_end','2026-10-01'); c.set_registered_model_alias('P1_Departures_Model','champion',mv.version)"
+```
+
+3. Entrenar y registrar v2 con los parámetros de ventana descritos en la sección 5.3:
+
+```powershell
+uv run --no-sync python -m tc5061_proyecto_equipo_44.modeling.train --question p1 --model rf --n-estimators 300 --max-depth 15 --train-start 2024-10-01 --train-end 2026-10-16 --eval-start 2026-10-16 --register
+```
+
+### Ejecución de la prueba A/B
+
+```powershell
+uv run --no-sync python scripts/ab_test_p1.py --eval-start 2026-10-16
+```
+
+`--eval-start` debe coincidir con el `--train-end` / `--eval-start` usado para entrenar v2. Por defecto, v1 es la versión con alias `champion` y v2 la que tiene alias `challenger`. Para comparar otras versiones:
+
+```powershell
+uv run --no-sync python scripts/ab_test_p1.py --eval-start 2026-10-16 --v1 1 --v2 2
+```
+
+Para mover el alias `champion` a la versión ganadora, agregar `--promote`:
+
+```powershell
+uv run --no-sync python scripts/ab_test_p1.py --eval-start 2026-10-16 --promote
+```
+
+| Opción | Descripción | Valor por defecto |
+|---|---|---|
+| `--eval-start` | Inicio del hold-out (obligatorio). | — |
+| `--eval-end` | Fin del hold-out (exclusivo). | Último dato disponible |
+| `--v1`, `--v2` | Versiones a comparar. | Alias `champion` y `challenger` |
+| `--min-improvement` | Mejora relativa mínima del MAE para que v2 reemplace a v1. | 0.02 (2 %) |
+| `--peak-tolerance` | Empeoramiento máximo tolerado del MAE en horas pico. | 0.02 (2 %) |
+| `--n-boot` | Remuestreos del bootstrap. | 2000 |
+| `--promote` | Mueve el alias `champion` a la versión ganadora. | Desactivado |
+| `--allow-overlap` | Permite continuar si una versión entrenó con datos del hold-out. | Desactivado |
+
+### Métricas y criterio de decisión
+
+El script calcula, para cada versión, MAE, RMSE, R², sesgo y MAE en horas de alta demanda (percentil 90 de las salidas reales). La significancia de la diferencia de MAE se estima con un bootstrap pareado que remuestrea horas completas.
+
+La versión v2 reemplaza a v1 solo si cumple las tres condiciones:
+
+1. Mejora el MAE al menos `--min-improvement`.
+2. El intervalo de confianza del 95 % de la diferencia de MAE (v2 − v1) queda completamente por debajo de 0.
+3. El MAE en horas pico no empeora más de `--peak-tolerance`.
+
+Antes de evaluar, el script verifica mediante las etiquetas `data_train_end` que ninguna versión haya entrenado con datos del hold-out, y se detiene si detecta una fuga.
+
+### Resultados
+
+Archivos generados:
+
+- Un run en MLflow con la etiqueta `stage_of_work=ab_test`, con parámetros y métricas de ambas versiones.
+- `reports/p1_ab_test.json`: métricas, intervalo de confianza, criterios y versión ganadora.
+- `reports/figures/p1_ab_mae_by_hour.png`: MAE por hora del día para cada versión.
+
+**Resultado obtenido:** la versión v1 obtuvo el mejor desempeño y se mantiene como versión vigente (alias `champion`).
+
+### Limitaciones
+
+- El hold-out cubre un periodo corto (la segunda quincena de octubre de 2026), por lo que la variable `month` es constante en la evaluación y no se puede valorar el comportamiento estacional.
+- El bootstrap remuestrea horas, que dentro de un mismo día están correlacionadas; por ello el intervalo de confianza puede resultar más estrecho de lo real.
+- Para una conclusión más robusta sobre Continuous Training conviene repetir la comparación en varios periodos consecutivos (backtest).
+
+## 13. Integrantes del equipo
 
 | Integrante | Matrícula | Responsabilidad principal |
 |---|---|---|

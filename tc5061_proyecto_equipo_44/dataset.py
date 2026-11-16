@@ -58,7 +58,7 @@ NOMENCLATURE_FILENAME_RE = re.compile(r"nomenclatura_(\d{4})_(0[1-9]|1[0-2])(?:-
 PARQUET_BATCH_SIZE = 100_000
 DATE_COLUMNS = {"inicio_del_viaje", "fin_del_viaje"}
 START_MONTH = (2024, 10)
-END_MONTH = (2026, 9)
+END_MONTH = (2026, 10)
 
 
 class _DataLinksParser(HTMLParser):
