@@ -561,13 +561,14 @@ P2 (clasificacion) y P3 (clustering).
 
 ### Periodos analizados
 
-- Referencia: julio-septiembre de 2025.
-- Actual: julio-septiembre de 2026.
-- P1 y P2: 10,000 registros por periodo.
-- P3: 368 estaciones compartidas.
+- Referencia: 24 meses históricos (ej. 2024-10-01 a 2026-10-01). Representa el conjunto completo de datos con el que se entrenó el modelo (Champion), abarcando todas las estacionalidades.
+- Actual: Último mes en producción (ej. 2026-10-01 a 2026-11-01).
+- P1 y P2: 10,000 registros por periodo para optimización de memoria.
+- P3: 468 estaciones compartidas.
 
-Los periodos se deben validar con el equipo frente
-a los datos utilizados para entrenar los modelos.
+Justificación técnica de la ventana de tiempo:
+
+En MLOps, contrastar la memoria histórica completa del modelo (24 meses) contra exclusivamente el mes actual aislado (1 mes) evita la dilución de la señal y los falsos positivos por estacionalidad. Esto garantiza que cualquier drift detectado refleje un cambio genuino en las distribuciones (ej. alteración en los rezagos o valores nulos nuevos) frente a los datos que la API recibe hoy.
 
 ### Instalacion
 
@@ -590,18 +591,18 @@ Desde la carpeta principal del proyecto:
 
 | Modelo | Variables con drift | Drift global |
 |---|---|---|
-| P1 | 0 de 8 | No detectado |
-| P2 | 1 de 11 (dpcapacity) | No detectado |
-| P3 | 1 de 10 (weekend_share) | No detectado |
+| P1 | 5 de 8 (month, departures_rolling_mean_24h, departures_lag_24h, departures_lag_1h, departures_lag_168h) | Detectado (62.5%) |
+| P2 | 6 de 11 (month, departures_rolling_mean_24h, departures_lag_24h, departures_lag_1h, departures_lag_168h, arrivals_lag_1h) | Detectado (54.5%) |
+| P3 | 1 de 10 (avg_daily_departures, total_arrivals, weekend_departures, morning_departures, total_departures) | Detectado (50%) |
 
 ### Evidencia
 
-- reports/evidently/p1_drift.html
-- reports/evidently/p2_drift.html
-- reports/evidently/p3_drift.html
+- reports/evidently/p1_drift_v2.html
+- reports/evidently/p2_drift_v2.html
+- reports/evidently/p3_drift_v2.html
 
-La interpretacion y las limitaciones se encuentran
-en docs/evidently_drift_results.md.
+<!-- La interpretacion y las limitaciones se encuentran
+en docs/evidently_drift_results.md. -->
 
 ## 12. Integrantes del equipo
 
