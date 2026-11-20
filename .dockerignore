@@ -1,0 +1,16 @@
+
+# Excluir todo por defecto
+*
+
+# Incluir el codigo de nuestra API
+!api/
+!api/main.py
+!api/requirements-api.txt
+
+# Incluir solamente el modelo preparado para despliegue
+!models/
+!models/serving/
+!models/serving/**
+
+# Incluir la definicion del contenedor
+!Containerfile

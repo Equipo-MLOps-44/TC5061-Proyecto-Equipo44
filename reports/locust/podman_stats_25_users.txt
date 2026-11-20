@@ -1,0 +1,3 @@
+ID            NAME                               CPU %       MEM USAGE / LIMIT  MEM %       NET IO             BLOCK IO           PIDS        CPU TIME      AVG CPU %
+3487f6efbcc4  tc5061-proyecto-equipo44-mlflow-1  6.21%       2.371GB / 8.161GB  29.06%      181.8kB / 6.641MB  13.03MB / 9.937MB  355         1m57.738584s  6.21%
+2f3c40fdbeee  tc5061-proyecto-equipo44-api-1     6.09%       219.2MB / 8.161GB  2.69%       3.279MB / 2.104MB  4.534MB / 4.096kB  44          1m55.499843s  6.09%
