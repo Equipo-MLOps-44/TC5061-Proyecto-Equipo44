@@ -722,7 +722,104 @@ Archivos generados:
 - El bootstrap remuestrea horas, que dentro de un mismo día están correlacionadas; por ello el intervalo de confianza puede resultar más estrecho de lo real.
 - Para una conclusión más robusta sobre Continuous Training conviene repetir la comparación en varios periodos consecutivos (backtest).
 
-## 13. Integrantes del equipo
+## 13. Orquestación con Docker Compose y pruebas de carga con Locust
+
+### Docker Compose
+
+Se implementó la orquestación de los servicios del proyecto MiBici mediante Docker Compose, utilizando el Containerfile desarrollado anteriormente.
+
+El sistema incluye dos servicios:
+
+- **FastAPI:** API REST para realizar predicciones con P1 y P3.
+- **MLflow:** servidor para el seguimiento de experimentos y modelos.
+
+Para construir e iniciar los servicios desde la carpeta principal del proyecto:
+
+```powershell
+podman compose up -d --build
+```
+
+Para verificar que los contenedores estén activos:
+
+```powershell
+podman compose ps
+```
+
+Servicios disponibles:
+
+- FastAPI: http://localhost:8000/docs
+- MLflow: http://localhost:5000
+
+Para detener los servicios:
+
+```powershell
+podman compose down
+```
+
+MLflow utiliza un volumen persistente independiente. La API carga los modelos incluidos en su imagen, por lo que iniciar MLflow no modifica automáticamente los modelos utilizados para las predicciones.
+
+Se comprobó que ambos servicios funcionan y que los endpoints de P1 y P3 responden correctamente.
+
+### Pruebas de carga con Locust
+
+Se implementó un escenario de pruebas de carga utilizando Locust para analizar el rendimiento de la API bajo diferentes cantidades de usuarios simultáneos.
+
+El archivo `locustfile.py` simula peticiones a los endpoints:
+
+- `POST /predict`: modelo P1 (regresión).
+- `POST /predict/p3`: modelo P3 (clustering).
+
+El escenario utiliza una proporción aproximada de tres peticiones a P1 por cada petición a P3.
+
+### Instalación de Locust
+
+Crear un entorno independiente e instalar las dependencias:
+
+```powershell
+uv venv .venv-locust --python 3.11
+uv pip install --python .\.venv-locust\Scripts\python.exe -r .\requirements-locust.txt
+```
+
+### Ejecución de las pruebas
+
+Con Docker Compose funcionando, ejecutar:
+
+```powershell
+.\.venv-locust\Scripts\python.exe -m locust -f locustfile.py --host http://127.0.0.1:8000
+```
+
+Abrir http://localhost:8089 para configurar los usuarios simulados e iniciar las pruebas.
+
+### Escenarios evaluados
+
+| Escenario | Usuarios | Ramp-up |
+|---|---:|---:|
+| Carga baja | 10 | 2 usuarios/s |
+| Carga media | 25 | 5 usuarios/s |
+
+Durante las pruebas se analizaron las siguientes métricas:
+
+- Número de peticiones procesadas.
+- Peticiones por segundo (RPS).
+- Tiempo promedio de respuesta.
+- Percentiles de latencia.
+- Porcentaje de errores.
+
+También se utilizó `podman stats` para medir el consumo de CPU y memoria de los contenedores.
+
+### Resultados y evidencia
+
+En la prueba de 10 usuarios se registraron 1,269 peticiones sin errores.
+
+La prueba de 25 usuarios también mostró respuestas satisfactorias y un mayor número de peticiones procesadas por segundo.
+
+Se generaron reportes HTML, archivos CSV y mediciones de recursos, disponibles en:
+
+`reports/locust/`
+
+Estas evidencias permiten evaluar el rendimiento del sistema y sirven como insumo para el análisis FinOps del equipo.
+
+## 14. Integrantes del equipo
 
 | Integrante | Matrícula | Responsabilidad principal |
 |---|---|---|

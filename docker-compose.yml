@@ -1,0 +1,38 @@
+﻿services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: mibici-api:compose
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: mibici-api:compose
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on:
+      - mlflow
+    restart: unless-stopped
+
+volumes:
+  mlflow_data:
