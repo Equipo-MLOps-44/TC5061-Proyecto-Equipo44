@@ -225,6 +225,7 @@ def isolated_p3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # Reads our fake df
     monkeypatch.setattr(p3_trainer.pd, "read_parquet", lambda _path: df.copy())
     monkeypatch.setattr(p3_trainer, "log_mlflow_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(p3_trainer, "dataset_metadata", lambda _path: {})
 
     # Temp files
     models_dir = tmp_path / "models"
