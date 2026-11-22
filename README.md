@@ -7,56 +7,6 @@ El objetivo es construir un flujo reproducible de ingesta de datos, *feature eng
 
 **Repositorio:** https://github.com/Equipo-MLOps-44/TC5061-Proyecto-Equipo44
 
-## Guía rápida: levantar el sistema y ejecutar el pipeline
-
-Resumen de punta a punta en PowerShell, desde la raíz del repositorio. Cada paso remite a la sección con el detalle.
-
-**1. Preparar el entorno** (sección 4). Requiere Python 3.11, Git, `uv` y Podman.
-
-```powershell
-git clone https://github.com/Equipo-MLOps-44/TC5061-Proyecto-Equipo44.git
-cd TC5061-Proyecto-Equipo44
-uv venv --python 3.11
-.\.venv\Scripts\Activate.ps1
-uv pip install -r requirements.txt
-```
-
-**2. Ejecutar el pipeline de ML** (sección 5): ingesta → features → entrenamiento, registrado en MLflow.
-
-```powershell
-python -m mlflow run . -e ingest   --env-manager=local --experiment-name mibici-equipo44
-python -m mlflow run . -e features --env-manager=local --experiment-name mibici-equipo44
-python -m mlflow run . -e train    --env-manager=local --experiment-name mibici-equipo44 -P question=p1 -P model=rf
-python -m mlflow run . -e train    --env-manager=local --experiment-name mibici-equipo44 -P question=p2 -P model=baseline
-python -m mlflow run . -e train    --env-manager=local --experiment-name mibici-equipo44 -P question=p3 -P model=k_means
-python -m pytest tests -v
-```
-
-La ingesta descarga ~9 millones de viajes, por lo que tarda varios minutos. Para revisar los experimentos: `python -m mlflow ui` y abrir http://127.0.0.1:5000.
-
-**3. Levantar el sistema** (secciones 10 y 13): API de inferencia y servidor MLflow.
-
-```powershell
-podman machine start          # solo en Windows/macOS, si la máquina no está corriendo
-podman compose up -d --build
-Invoke-RestMethod http://127.0.0.1:8000/health
-```
-
-- API (Swagger): http://127.0.0.1:8000/docs
-- MLflow: http://127.0.0.1:5000
-
-La imagen de la API incluye los modelos de `models/serving/`, así que el sistema se puede levantar sin ejecutar antes el pipeline. Si `podman compose up` falla con un error de `netavark`/`nftables`, consulta la solución en la sección 13.
-
-**4. Pruebas de carga y análisis FinOps** (secciones 13 y 14).
-
-```powershell
-uv venv .venv-locust --python 3.11
-uv pip install --python .\.venv-locust\Scripts\python.exe -r .\requirements-locust.txt
-.\.venv-locust\Scripts\python.exe -m locust -f locustfile.py --host http://127.0.0.1:8000 --headless -u 25 -r 5 -t 3m --csv reports/locust/mi_corrida/locust_25u --html reports/locust/mi_corrida/locust_25u.html
-```
-
-**5. Detener el sistema:** `podman compose down`.
-
 ## 1. Preguntas del proyecto
 
 El proyecto busca responder tres preguntas mediante diferentes técnicas de *machine learning*.
@@ -297,7 +247,7 @@ uv run --no-sync mlflow run . -e train -P question=p2 -P model=baseline --env-ma
 **P3 — Clustering:**
 
 ```powershell
-uv run --no-sync mlflow run . -e train -P question=p3 -P model=k_means --env-manager local --experiment-name mibici-equipo44
+uv run --no-sync mlflow run . -e train -P question=p3 -P model=kmeans --env-manager local --experiment-name mibici-equipo44
 ```
 
 | Pregunta | Modelo baseline | Métricas de evaluación |
@@ -530,9 +480,9 @@ Se eligió empaquetar el modelo dentro de la imagen para realizar inferencia en 
 
 ### Modelo para pregunta 3 utilizado
 
-- Ubicación: `models/serving/p3_kmeans_5_clusters.joblib`
-- Algoritmo: `KMeans` (dentro de un `Pipeline` de scikit-learn)
-- Configuración: 5 clústeres, inicialización `random`.
+- Ubicación: `models/serving/p3_kmeans_3_clusters.joblib`
+- Algoritmo: `KMeans`
+- Configuración: 3 clústeres, inicialización `random`.
 - Objetivo: agrupar las estaciones del sistema MiBici basándose en patrones de uso, capacidad y geografía.
 
 El modelo se cargó directamente mediante la librería `joblib` desde el sistema de archivos. Se eligió empaquetar el modelo dentro de la imagen para realizar inferencia en tiempo real sin depender de servicios externos durante las predicciones.
@@ -810,25 +760,6 @@ MLflow utiliza un volumen persistente independiente. La API carga los modelos in
 
 Se comprobó que ambos servicios funcionan y que los endpoints de P1 y P3 responden correctamente.
 
-#### Solución de problemas: error `netavark` / `nftables` en Windows (WSL)
-
-En algunos equipos con Windows, `podman compose up` falla al iniciar los contenedores con:
-
-```text
-Error response from daemon: netavark (exit code 1): nftables error: "nft" did not return successfully while applying ruleset
-```
-
-El fallo ocurre al crear la red propia del proyecto y los alias de red que Compose agrega a cada servicio. La red por defecto de Podman sí funciona. Primero reinicia la máquina de Podman (`podman machine stop` y luego `podman machine start`). Si el error persiste, levanta los mismos dos servicios con `podman run`. La API carga los modelos desde su imagen y no se comunica con MLflow para predecir, así que el comportamiento es el mismo:
-
-```powershell
-podman compose build
-podman volume create tc5061-proyecto-equipo44_mlflow_data
-podman run -d --name mibici-mlflow -p 5000:5000 -v tc5061-proyecto-equipo44_mlflow_data:/mlflow mibici-api:compose mlflow server --backend-store-uri sqlite:////mlflow/mlflow.db --artifacts-destination /mlflow/artifacts --host 0.0.0.0 --port 5000
-podman run -d --name mibici-api -p 8000:8000 mibici-api:compose
-```
-
-Para detenerlos: `podman rm -f mibici-api mibici-mlflow`.
-
 ### Pruebas de carga con Locust
 
 Se implementó un escenario de pruebas de carga utilizando Locust para analizar el rendimiento de la API bajo diferentes cantidades de usuarios simultáneos.
@@ -859,99 +790,36 @@ Con Docker Compose funcionando, ejecutar:
 
 Abrir http://localhost:8089 para configurar los usuarios simulados e iniciar las pruebas.
 
-Para ejecuciones reproducibles se recomienda el modo *headless*, que guarda CSV y un reporte HTML (`-u`: usuarios, `-r`: usuarios nuevos por segundo, `-t`: duración):
-
-```powershell
-.\.venv-locust\Scripts\python.exe -m locust -f locustfile.py --host http://127.0.0.1:8000 `
-  --headless -u 25 -r 5 -t 3m `
-  --csv reports/locust/mi_corrida/locust_25u --html reports/locust/mi_corrida/locust_25u.html
-```
-
-### Monitoreo de CPU y memoria con `podman stats`
-
-En otra terminal, mientras corre Locust:
-
-```powershell
-podman stats --no-reset --interval 2 `
-  --format "{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.PIDs}}" `
-  mibici-api mibici-mlflow > reports/locust/mi_corrida/podman_stats_25u.csv
-```
-
-Ajusta los nombres de los contenedores a los de `podman ps`. Con Compose suelen ser `tc5061-proyecto-equipo44-api-1` y `tc5061-proyecto-equipo44-mlflow-1`.
-
-**Importante:** no uses `podman stats --no-stream` para medir la carga. Cada lectura en ese modo reporta el promedio de CPU desde que arrancó el contenedor, no la carga del momento, y el valor decae aunque la carga sea constante. En modo streaming (`--interval`) descarta la primera lectura, que también es acumulada. 100 % de CPU equivale a un núcleo.
-
 ### Escenarios evaluados
 
-Cada usuario simulado espera entre 1 y 3 s entre peticiones (≈ 0.5 req/s) y cada escenario dura 3 minutos.
+| Escenario | Usuarios | Ramp-up |
+|---|---:|---:|
+| Carga baja | 10 | 2 usuarios/s |
+| Carga media | 25 | 5 usuarios/s |
 
-| Escenario | Usuarios | Ramp-up | Workers de uvicorn |
-|---|---:|---:|---:|
-| Carga baja | 10 | 2 usuarios/s | 1 |
-| Carga media | 25 | 5 usuarios/s | 1 |
-| Carga alta | 100 | 10 usuarios/s | 1 |
-| Estrés | 250 | 10 usuarios/s | 1 |
-| Estrés optimizado | 250 | 10 usuarios/s | 4 |
+Durante las pruebas se analizaron las siguientes métricas:
 
-Durante las pruebas se analizaron el número de peticiones, las peticiones por segundo, los percentiles de latencia, el porcentaje de errores y el consumo de CPU y memoria de cada contenedor.
+- Número de peticiones procesadas.
+- Peticiones por segundo (RPS).
+- Tiempo promedio de respuesta.
+- Percentiles de latencia.
+- Porcentaje de errores.
+
+También se utilizó `podman stats` para medir el consumo de CPU y memoria de los contenedores.
 
 ### Resultados y evidencia
 
-Corrida del 21 de noviembre de 2026 (métricas en la ventana estable de cada prueba):
+En la prueba de 10 usuarios se registraron 1,269 peticiones sin errores.
 
-| Escenario | Peticiones | Errores | Req/s | Latencia p50 / p95 | CPU API | RAM API |
-|---|---:|---:|---:|---|---:|---:|
-| 10 usuarios | 870 | 0 | 4.9 | 62 / 68 ms | 7 % | 249 MB |
-| 25 usuarios | 2,131 | 0 | 11.9 | 62 / 72 ms | 16 % | 233 MB |
-| 100 usuarios | 8,506 | 0 | 48.5 | 65 / 110 ms | 63 % | 250 MB |
-| 250 usuarios | 15,450 | 0 | 89.8 | 720 / 1,300 ms | 124 % | 257 MB |
-| 250 usuarios, 4 workers | 20,338 | 0 | 121.3 | 64 / 86 ms | 162 % | 904 MB |
+La prueba de 25 usuarios también mostró respuestas satisfactorias y un mayor número de peticiones procesadas por segundo.
 
-- No hubo errores en ningún escenario.
-- Cada inferencia consume ≈ 13 ms de CPU, y el consumo crece linealmente con el tráfico.
-- Con un solo worker la API se satura en ≈ 90 req/s: las peticiones se encolan y la mediana de latencia sube a 720 ms. Con 4 workers vuelve a 64 ms.
-- El servidor MLflow ocupa ≈ 2.3 GB de RAM aunque no participa en la inferencia.
+Se generaron reportes HTML, archivos CSV y mediciones de recursos, disponibles en:
 
-Evidencia:
+`reports/locust/`
 
-- `reports/locust/run_2026-11-21_streaming/`: reportes HTML de Locust, CSV de estadísticas e historial, y muestreos de `podman stats` por escenario.
-- `reports/figures/load_*.png`: gráficas de rendimiento, latencia, CPU y memoria.
-- `reports/reporte_carga_finops.docx`: reporte completo de las pruebas de carga y del análisis FinOps.
+Estas evidencias permiten evaluar el rendimiento del sistema y sirven como insumo para el análisis FinOps del equipo.
 
-## 14. Análisis FinOps
-
-Con el consumo medido se estimó el costo por inferencia para cuatro opciones de despliegue. Se usaron precios de lista on-demand de referencia: AWS us-east-1 (t3.small $0.0208/h, t3.medium $0.0416/h, c6i.large $0.085/h) y Google Cloud Run ($0.000024 por vCPU-s, $0.0000025 por GiB-s y $0.40 por millón de peticiones). Las cifras cubren solo cómputo.
-
-Para regenerar las métricas, las gráficas y `reports/finops_summary.json` a partir de una corrida:
-
-```powershell
-python scripts/finops_load_analysis.py --run-dir reports/locust/run_2026-11-21_streaming
-```
-
-Los precios y supuestos se editan al inicio de `scripts/finops_load_analysis.py`.
-
-| Opción | Demanda natural (0.13 req/s) | 25 usuarios (11.9 req/s) | 80 req/s |
-|---|---:|---:|---:|
-| A. Actual: API + MLflow en t3.medium | $87.76 / millón · $30.37 / mes | $0.97 / millón | $0.34 / millón |
-| B. Solo API en t3.small | $43.88 / millón · $15.18 / mes | **$0.48 / millón** | **$0.19 / millón** |
-| C. Solo API (2 workers) en c6i.large | $179.32 / millón · $62.05 / mes | $1.98 / millón | $0.30 / millón |
-| D. Serverless con escala a cero (Cloud Run) | **$2.93 / millón · $1.01 / mes** | $2.52 / millón | $1.03 / millón |
-
-La demanda natural supone una predicción por estación por hora (474 × 24 ≈ 341 mil inferencias al mes).
-
-![Costo por millón de inferencias](reports/figures/finops_cost_per_million.png)
-
-Conclusiones y optimizaciones:
-
-1. **Separar MLflow del serving.** Sin MLflow, la API cabe en una t3.small: −50 % del costo fijo ($30.37 → $15.18 al mes).
-2. **Elegir el despliegue según la demanda.** Con la demanda natural, la infraestructura está ociosa más del 99 % del tiempo y serverless con escala a cero cuesta ≈ $1 al mes. Por encima de ≈ 2 req/s sostenidas (≈ 5.2 millones de inferencias al mes) conviene una VM bien dimensionada.
-3. **Workers y autoescalado.** Conviene usar un worker por vCPU y escalar al superar el 70 % de CPU (≈ 63 req/s por worker).
-4. **Predicción por lotes.** Las 474 predicciones de cada hora pueden atenderse con un endpoint por lotes o un job programado, en lugar de 474 peticiones HTTP individuales.
-5. **Modelo e imagen más ligeros.** Un Random Forest más pequeño o exportado a ONNX abarataría la inferencia, pero debe evaluarse contra el MAE. La imagen de 954 MB puede reducirse cargando el modelo skops sin MLflow completo.
-
-El detalle de supuestos, limitaciones y estrategias está en `reports/reporte_carga_finops.docx`.
-
-## 15. Integrantes del equipo
+## 14. Integrantes del equipo
 
 | Integrante | Matrícula | Responsabilidad principal |
 |---|---|---|
